@@ -31,6 +31,9 @@
       "path": "./packages/adapters/fake"
     },
     {
+      "path": "./packages/adapters/codex"
+    },
+    {
       "path": "./apps/agentd"
     }
   ]
