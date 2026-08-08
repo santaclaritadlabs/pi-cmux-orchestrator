@@ -16,3 +16,4 @@ fixtures/**/raw/
 # A CodeGraph index is specific to one checkout's root and bytes. It is never
 # shared between worktrees and never committed.
 .codegraph/
+skills-lock.json
