@@ -236,6 +236,113 @@ describe("every decision is an auditable event", () => {
   });
 });
 
+describe("capabilities fail closed", () => {
+  it("denies a capability this build does not recognise", async () => {
+    await using dir = await temporaryDirectory();
+    const base = await taskIn(dir.path);
+    const task: AgentTask = {
+      ...base,
+      constraints: {
+        ...base.constraints,
+        capabilities: ["repo.read", "definitely.not.a.capability"],
+      },
+    };
+
+    const decision = await decide(task);
+    assert.equal(decision.ok, false);
+    // Not POLICY_DENIED: the request is not something this build understands,
+    // which is a different answer from "not permitted here".
+    assert.equal(decision.error.code, "CAPABILITY_UNSUPPORTED");
+
+    const details = decision.error.details;
+    assert.ok(details !== undefined);
+    assert.equal(details["rule"], "constraints.capabilities-known");
+    // The denial names the offender rather than making the operator diff lists.
+    assert.match(String(details["reason"]), /definitely\.not\.a\.capability/);
+  });
+
+  it("admits the capabilities it does recognise", async () => {
+    await using dir = await temporaryDirectory();
+    const base = await taskIn(dir.path);
+    const task: AgentTask = {
+      ...base,
+      constraints: {
+        ...base.constraints,
+        capabilities: ["repo.read", "test.run"],
+      },
+    };
+
+    const decision = await decide(task);
+    assert.equal(decision.ok, true);
+  });
+
+  it("refuses a capability the task's own constraints contradict", async () => {
+    // `capabilities` must not become a second permission channel that disagrees
+    // with the flags: whichever component read the list would be the one wrong.
+    await using dir = await temporaryDirectory();
+    const base = await taskIn(dir.path);
+    const task: AgentTask = {
+      ...base,
+      constraints: {
+        ...base.constraints,
+        mayWrite: false,
+        capabilities: ["repo.write"],
+      },
+    };
+
+    const decision = await decide(task);
+    assert.equal(decision.ok, false);
+    assert.equal(decision.error.code, "CAPABILITY_UNSUPPORTED");
+    assert.equal(
+      decision.error.details?.["rule"],
+      "constraints.capabilities-consistent",
+    );
+  });
+
+  it("refuses network capability under a deny network mode", async () => {
+    await using dir = await temporaryDirectory();
+    const base = await taskIn(dir.path);
+    const task: AgentTask = {
+      ...base,
+      constraints: {
+        ...base.constraints,
+        network: "deny",
+        capabilities: ["net.fetch"],
+      },
+    };
+
+    const decision = await decide(task);
+    assert.equal(decision.ok, false);
+    assert.equal(decision.error.code, "CAPABILITY_UNSUPPORTED");
+  });
+
+  it("records an unsupported capability on the audit trail", async () => {
+    await using dir = await temporaryDirectory();
+    const base = await taskIn(dir.path);
+    const task: AgentTask = {
+      ...base,
+      constraints: { ...base.constraints, capabilities: ["nope"] },
+    };
+
+    const decision = await decide(task);
+    const event = policyEvent(
+      "AUTH-41",
+      "run_01JQZX3K5T7V9B2N4M6P8R0AWC",
+      0,
+      "2026-08-08T05:00:01.000Z",
+      decision,
+    );
+
+    const parsed = parseAgentEvent(JSON.parse(JSON.stringify(event)));
+    assert.ok(parsed.ok);
+    assert.equal(parsed.value.payload["decision"], "denied");
+    assert.equal(
+      parsed.value.payload["rule"],
+      "constraints.capabilities-known",
+    );
+  });
+});
+
 describe("the rule set is enumerable", () => {
   it("exposes its rules so a runbook can list what is enforced", () => {
     const names = ruleNames();

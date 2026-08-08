@@ -605,7 +605,7 @@ export class RunStore {
   public async releaseLock(
     runId: string,
   ): Promise<Result<undefined, AgentdError>> {
-    return await tryCatchAsync(
+    const released = await tryCatchAsync(
       async () => {
         await unlink(this.runFile(runId, "lock"));
         return undefined;
@@ -615,6 +615,9 @@ export class RunStore {
           runId,
         }),
     );
+    return !released.ok && isNotFound(released.error)
+      ? ok(undefined)
+      : released;
   }
 
   // --- internals ----------------------------------------------------------

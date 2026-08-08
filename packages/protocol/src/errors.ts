@@ -95,6 +95,18 @@ const ERROR_SPECS = {
   /** Another process holds the run's lock. Retry after it releases. */
   RUN_LOCKED: { retryable: true, category: "lifecycle" },
   /**
+   * Another daemon already owns this runtime directory, or its ownership could
+   * not be disproven. Two daemons sharing a run store would split clients and
+   * interleave writes into the same lifecycle history, so the second one
+   * refuses to start. Not retryable: it needs an operator to stop the other
+   * daemon. A crash releases the underlying OS lock automatically.
+   */
+  DAEMON_ALREADY_RUNNING: { retryable: false, category: "lifecycle" },
+  /** The daemon has begun draining and will not accept new execution. */
+  DAEMON_SHUTTING_DOWN: { retryable: true, category: "lifecycle" },
+  /** Boot recovery could not restore a safe, fully-owned runtime. */
+  RECOVERY_INCOMPLETE: { retryable: false, category: "lifecycle" },
+  /**
    * The run's true outcome could not be determined after a restart. Never
    * resolved to success by inference — see the ORPHANED state.
    */
@@ -112,8 +124,10 @@ const ERROR_SPECS = {
   OUTPUT_LIMIT_EXCEEDED: { retryable: false, category: "execution" },
   /** A stream line could not be parsed as an event. Individually recoverable. */
   MALFORMED_WORKER_OUTPUT: { retryable: false, category: "execution" },
-  /** The process ended without ever emitting a terminal event. */
+  /** Retained for protocol-v1 compatibility with pre-AgentResult workers. */
   MISSING_TERMINAL_EVENT: { retryable: false, category: "execution" },
+  /** The process ended without emitting its one required AgentResult. */
+  MISSING_TERMINAL_RESULT: { retryable: false, category: "execution" },
 
   // --- storage: durable state could not be read or written -----------------
   STORE_IO_FAILED: { retryable: true, category: "storage" },

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { describe, it } from "node:test";
 
-import { decodeJsonLine, parseAgentEvent } from "@pi-cmux/protocol";
+import {
+  decodeJsonLine,
+  parseAgentEvent,
+  parseAgentResult,
+} from "@pi-cmux/protocol";
 
 import { replayWorkerPath } from "./harness.ts";
 import { parseReplayOptions } from "./replay-options.ts";
@@ -47,6 +51,27 @@ function validEvents(stdout: string): number {
     .length;
 }
 
+function validResults(stdout: string): number {
+  return stdout
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => decodeJsonLine(line))
+    .filter((decoded) => decoded.ok && parseAgentResult(decoded.value).ok)
+    .length;
+}
+
+function eventSequences(stdout: string): number[] {
+  const sequences: number[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const decoded = decodeJsonLine(line);
+    if (!decoded.ok) continue;
+    const event = parseAgentEvent(decoded.value);
+    if (event.ok) sequences.push(event.value.sequence);
+  }
+  return sequences;
+}
+
 describe("option parsing", () => {
   it("applies defaults", () => {
     const parsed = parseReplayOptions([]);
@@ -79,6 +104,7 @@ describe("the fake worker behaves like a real process", () => {
     assert.equal(outcome.code, 0);
     // 1 opening status + 4 logs + 1 closing status.
     assert.equal(validEvents(outcome.stdout), 6);
+    assert.equal(validResults(outcome.stdout), 1);
   });
 
   it("honours a requested exit code", async () => {
@@ -130,22 +156,29 @@ describe("failure modes", () => {
     assert.equal(decodeJsonLine(last).ok, false);
   });
 
-  it("omits the terminal event when asked", async () => {
+  it("omits the terminal result when asked", async () => {
     const withTerminal = await runWorker(["--emit", "1"]);
-    const without = await runWorker(["--emit", "1", "--no-terminal-event"]);
+    const without = await runWorker(["--emit", "1", "--no-terminal-result"]);
     assert.equal(
       validEvents(without.stdout),
       validEvents(withTerminal.stdout) - 1,
     );
+    assert.equal(validResults(withTerminal.stdout), 1);
+    assert.equal(validResults(without.stdout), 0);
+  });
+
+  it("can emit a duplicate terminal result", async () => {
+    const outcome = await runWorker([
+      "--emit",
+      "1",
+      "--duplicate-terminal-result",
+    ]);
+    assert.equal(validResults(outcome.stdout), 2);
   });
 
   it("emits a duplicate sequence with differing content", async () => {
     const outcome = await runWorker(["--emit", "2", "--duplicate-sequence"]);
-    const sequences = outcome.stdout
-      .split("\n")
-      .filter((l) => l.trim() !== "")
-      .map((l) => JSON.parse(l) as { sequence: number })
-      .map((e) => e.sequence);
+    const sequences = eventSequences(outcome.stdout);
 
     assert.notEqual(
       new Set(sequences).size,
@@ -156,10 +189,7 @@ describe("failure modes", () => {
 
   it("emits sequences out of order", async () => {
     const outcome = await runWorker(["--emit", "1", "--out-of-order"]);
-    const sequences = outcome.stdout
-      .split("\n")
-      .filter((l) => l.trim() !== "")
-      .map((l) => (JSON.parse(l) as { sequence: number }).sequence);
+    const sequences = eventSequences(outcome.stdout);
 
     assert.notDeepEqual(
       sequences,
