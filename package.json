@@ -19,12 +19,25 @@
     "test": "pnpm build && pnpm --recursive --stream test",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "schemas:emit": "pnpm build && node packages/protocol/dist/emit-schemas.js",
-    "fixtures:capture": "pnpm build && node packages/testkit/dist/capture-fixtures.js"
+    "fixtures:capture": "pnpm build && node packages/testkit/dist/capture-fixtures.js",
+    "hooks:install": "git config core.hooksPath .husky"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
+    "@commitlint/cli": "21.2.1",
+    "@commitlint/config-conventional": "21.2.0",
     "@eslint/js": "10.0.1",
     "@types/node": "22.20.1",
     "eslint": "10.8.0",
+    "lint-staged": "17.3.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.66.0"

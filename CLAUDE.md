@@ -156,6 +156,10 @@ Protocol rules:
 - Capture initial and final HEAD, dirty state, and file-change summary. Cleanup must be explicit, retryable, and never delete a worktree whose identity or task ownership cannot be proven.
 - Use commits as an optional handoff artifact; `agentd` remains authoritative for task state. Do not infer completion from Git alone.
 
+## Commit convention
+
+Commits follow Conventional Commits (`type(scope): description`); types and the closed scope list are defined in `docs/commits.md`. A local `commit-msg` hook (plain git hooks via `core.hooksPath`, no husky package or lifecycle scripts; `pnpm hooks:install` in each checkout) and a CI gate on PR commits enforce it. The convention applies to new commits only; do not rewrite history to retrofit it.
+
 ## Testing and verification
 
 - Unit-test the state machine, schemas/codecs, policy decisions, path containment, redaction, and each adapter parser with recorded fixtures.
