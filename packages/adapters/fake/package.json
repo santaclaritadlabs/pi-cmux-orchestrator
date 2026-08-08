@@ -1,0 +1,22 @@
+{
+  "name": "@pi-cmux/adapter-fake",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fake AgentRunner: a real process, a simulated provider.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@pi-cmux/protocol": "workspace:*",
+    "@pi-cmux/observability": "workspace:*",
+    "@pi-cmux/process-supervisor": "workspace:*",
+    "@pi-cmux/testkit": "workspace:*"
+  }
+}

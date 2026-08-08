@@ -1,0 +1,16 @@
+node_modules/
+dist/
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# Fixtures are byte-exact recordings of provider output and hand-written
+# adversarial input. Reformatting them would destroy what they test.
+fixtures/
+
+# Generated from the zod schemas by packages/protocol; formatted at emit time.
+schemas/
+
+# Authored by hand and normative. Reflowing them would churn the diff of the
+# two documents the project is specified by.
+CLAUDE.md
+pi-cmux-orchestrator-spec.md

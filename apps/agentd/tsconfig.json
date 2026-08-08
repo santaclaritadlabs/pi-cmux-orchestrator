@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/observability" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/policy" },
+    { "path": "../../packages/process-supervisor" },
+    { "path": "../../packages/worktrees" },
+    { "path": "../../packages/sandbox" },
+    { "path": "../../packages/adapters/fake" },
+    { "path": "../../packages/testkit" }
+  ]
+}

@@ -1,0 +1,7 @@
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":0,"timestamp":"2026-08-08T05:00:00.000Z","type":"status","payload":{"state":"RUNNING"}}
+{ this is not json
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":1,"timestamp":"2026-08-08T05:00:01.000Z","type":"log","payload":{"level":"info","message":"still going"}}
+{'single':'quotes'}
+Traceback (most recent call last):
+
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":2,"timestamp":"2026-08-08T05:00:02.000Z","type":"status","payload":{"state":"VALIDATING"}}

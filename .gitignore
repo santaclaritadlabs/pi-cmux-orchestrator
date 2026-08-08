@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Never commit captured provider output that has not been through the redactor.
+# scripts/capture-fixtures.ts writes here first, then emits redacted files to
+# fixtures/<provider>/.
+fixtures/**/raw/
+
+.DS_Store
+*.log
+.env
+.env.*
+.agents/skills/code-review-and-quality/
+
+# A CodeGraph index is specific to one checkout's root and bytes. It is never
+# shared between worktrees and never committed.
+.codegraph/

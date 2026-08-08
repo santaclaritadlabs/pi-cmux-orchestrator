@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentTask",
+  "description": "Serialized shape of AgentTask (protocol version 1). Structural only: cross-field invariants are enforced by the zod schemas in @pi-cmux/protocol and are NOT expressible here. Do not use this file as the sole validation of untrusted input.",
+  "readOnly": true,
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "1"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "parentTaskId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384,
+      "pattern": "^[^\\0]*$"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "investigate",
+        "design",
+        "implement",
+        "test",
+        "review",
+        "security-review"
+      ]
+    },
+    "workspace": {
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "repoId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\0]*$"
+        },
+        "worktreePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\0]*$"
+        },
+        "baseRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(?!-)[A-Za-z0-9._/-]+$"
+        }
+      },
+      "required": [
+        "repoId",
+        "worktreePath",
+        "baseRef"
+      ],
+      "additionalProperties": false
+    },
+    "worker": {
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude",
+            "cursor",
+            "antigravity",
+            "fake"
+          ]
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\0]*$"
+        }
+      },
+      "required": [
+        "kind",
+        "profile"
+      ],
+      "additionalProperties": false
+    },
+    "constraints": {
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "allowedPaths": {
+          "readOnly": true,
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\0]*$"
+          }
+        },
+        "forbiddenPaths": {
+          "readOnly": true,
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\0]*$"
+          }
+        },
+        "network": {
+          "type": "string",
+          "enum": [
+            "deny",
+            "allowlist",
+            "allow"
+          ]
+        },
+        "networkAllowlist": {
+          "readOnly": true,
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\0]*$"
+          }
+        },
+        "sandbox": {
+          "type": "string",
+          "enum": [
+            "required",
+            "preferred",
+            "none"
+          ]
+        },
+        "mayWrite": {
+          "type": "boolean"
+        },
+        "mayCommit": {
+          "type": "boolean"
+        },
+        "mayPush": {
+          "type": "boolean",
+          "const": false
+        },
+        "capabilities": {
+          "readOnly": true,
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\0]*$"
+          }
+        }
+      },
+      "required": [
+        "allowedPaths",
+        "forbiddenPaths",
+        "network",
+        "networkAllowlist",
+        "sandbox",
+        "mayWrite",
+        "mayCommit",
+        "mayPush",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "limits": {
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "softTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 31536000000
+        },
+        "hardTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 31536000000
+        },
+        "maxTurns": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        },
+        "budgetUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "softTimeoutMs",
+        "hardTimeoutMs"
+      ],
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "readOnly": true,
+      "maxItems": 128,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      }
+    },
+    "inputs": {
+      "readOnly": true,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "readOnly": true,
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\0]*$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\0]*$"
+          }
+        },
+        "required": [
+          "name",
+          "digest"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "taskId",
+    "objective",
+    "role",
+    "workspace",
+    "worker",
+    "constraints",
+    "limits",
+    "dependencies",
+    "inputs"
+  ],
+  "additionalProperties": false
+}

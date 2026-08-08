@@ -1,0 +1,127 @@
+/**
+ * Where the daemon keeps its socket, token and state.
+ *
+ * Two directories, both `0700`, both under the user's home:
+ *
+ *   `~/.local/run/`        the socket and the auth token (spec §4)
+ *   `~/.local/share/pi-agentd/`  durable run state (spec §11)
+ *
+ * A Unix socket path is limited to about 104 bytes on macOS (`sun_path`), so
+ * the path is checked at startup rather than failing later with an opaque
+ * `EINVAL` from `bind`.
+ */
+
+import { mkdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+
+import {
+  fromThrown,
+  makeError,
+  err,
+  ok,
+  type AgentdError,
+  type Result,
+} from "@pi-cmux/protocol";
+
+/** Conservative: the real limit is 104 on macOS, 108 on Linux. */
+export const MAX_SOCKET_PATH_BYTES = 100;
+
+export const SOCKET_NAME = "pi-agentd.sock";
+export const TOKEN_NAME = "pi-agentd.token";
+export const PID_NAME = "pi-agentd.pid";
+
+export const REPOSITORIES_NAME = "repositories.json";
+
+export type DaemonPaths = Readonly<{
+  runtimeDir: string;
+  stateDir: string;
+  socketPath: string;
+  tokenPath: string;
+  pidPath: string;
+  /**
+   * Every worktree this daemon creates lives under here — one root, so
+   * containment is a single check rather than a per-task argument.
+   *
+   * Deliberately a **sibling** of the state directory, not a child. The state
+   * directory holds the run store, which is on the sandbox denylist: a worker
+   * that can write `state.json` or `events.ndjson` can forge its own audit
+   * trail. A worktree nested inside it would be refused by that same rule, so
+   * the two live next to each other instead.
+   */
+  worktreeRoot: string;
+  /** The operator's repository allowlist. */
+  repositoriesPath: string;
+}>;
+
+export function resolveDaemonPaths(
+  options: { home?: string; runtimeDir?: string; stateDir?: string } = {},
+): DaemonPaths {
+  const home = options.home ?? homedir();
+  const runtimeDir = options.runtimeDir ?? path.join(home, ".local", "run");
+  const stateDir =
+    options.stateDir ?? path.join(home, ".local", "share", "pi-agentd");
+
+  return {
+    runtimeDir,
+    stateDir,
+    socketPath: path.join(runtimeDir, SOCKET_NAME),
+    tokenPath: path.join(runtimeDir, TOKEN_NAME),
+    pidPath: path.join(runtimeDir, PID_NAME),
+    worktreeRoot: `${stateDir}-worktrees`,
+    repositoriesPath: path.join(stateDir, REPOSITORIES_NAME),
+  };
+}
+
+/**
+ * Create both directories `0700` and verify the socket path will fit.
+ *
+ * `mkdir`'s `mode` is subject to the process umask, so the permissions are
+ * verified afterwards rather than assumed. A directory that already exists with
+ * looser permissions is a real finding: it means the token could be readable by
+ * someone else, and the daemon refuses to start rather than silently narrowing
+ * something the user may have widened deliberately.
+ */
+export async function prepareDaemonDirectories(
+  paths: DaemonPaths,
+): Promise<Result<undefined, AgentdError>> {
+  const socketBytes = Buffer.byteLength(paths.socketPath, "utf8");
+  if (socketBytes > MAX_SOCKET_PATH_BYTES) {
+    return err(
+      makeError(
+        "INTERNAL",
+        "the socket path is too long for a Unix domain socket",
+        { details: { bytes: socketBytes, limit: MAX_SOCKET_PATH_BYTES } },
+      ),
+    );
+  }
+
+  for (const directory of [paths.runtimeDir, paths.stateDir]) {
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+    } catch (cause) {
+      return err(
+        fromThrown(
+          "STORE_IO_FAILED",
+          "could not create a daemon directory",
+          cause,
+          { directory },
+        ),
+      );
+    }
+
+    const stats = await stat(directory);
+    const mode = stats.mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      return err(
+        makeError(
+          "STORE_IO_FAILED",
+          "a daemon directory is accessible to other users",
+          { details: { directory, mode: mode.toString(8) } },
+        ),
+      );
+    }
+  }
+
+  return ok(undefined);
+}

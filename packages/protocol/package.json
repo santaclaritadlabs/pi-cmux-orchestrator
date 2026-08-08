@@ -1,0 +1,19 @@
+{
+  "name": "@pi-cmux/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned AgentTask/AgentEvent/AgentResult contract. Single source of truth.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

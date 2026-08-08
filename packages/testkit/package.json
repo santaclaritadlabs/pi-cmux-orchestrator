@@ -1,0 +1,24 @@
+{
+  "name": "@pi-cmux/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fake worker process, fixture loading, and deterministic clock.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./replay": {
+      "types": "./dist/replay.d.ts",
+      "default": "./dist/replay.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@pi-cmux/protocol": "workspace:*",
+    "@pi-cmux/observability": "workspace:*"
+  }
+}
