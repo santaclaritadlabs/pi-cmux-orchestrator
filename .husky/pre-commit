@@ -1,0 +1,3 @@
+#!/bin/sh
+# Lint and format only staged files. Runs via lint-staged (see package.json).
+pnpm exec lint-staged

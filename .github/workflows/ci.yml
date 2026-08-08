@@ -43,3 +43,46 @@ jobs:
       # A drift here means the serialized contract and the zod schemas disagree.
       - name: Assert generated artifacts are committed
         run: git diff --exit-code
+
+  # Commit messages must follow docs/commits.md. The local commit-msg hook is
+  # convenience; this job is the authoritative gate. Push events need no check:
+  # every commit on main came through a PR that passed here.
+  commitlint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          # Full history so the PR range (base..head) can be resolved.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Validate PR commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Commits created before the convention was adopted
+          # (codex/p3-codex-adapter). Remove the entry once that branch has
+          # merged; stale SHAs in this list are harmless. Full SHAs: git
+          # rev-list emits full hashes, so a short hash would never match.
+          EXEMPT="7e4bc4161fd5ca526d4cfe0c636f057063d24315"
+          fail=0
+          for c in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            case " $EXEMPT " in
+              *" $c "*) continue ;;
+            esac
+            git log -1 --format=%s "$c" | pnpm exec commitlint || fail=1
+          done
+          exit $fail
