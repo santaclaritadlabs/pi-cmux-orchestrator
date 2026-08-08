@@ -1,0 +1,4 @@
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":0,"timestamp":"2026-08-08T05:00:00.000Z","type":"status","payload":{"state":"RUNNING"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":7,"timestamp":"2026-08-08T05:00:07.000Z","type":"log","payload":{"level":"info","message":"from the future"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":1,"timestamp":"2026-08-08T05:00:01.000Z","type":"log","payload":{"level":"info","message":"back in order"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":8,"timestamp":"2026-08-08T05:00:08.000Z","type":"status","payload":{"state":"VALIDATING"}}

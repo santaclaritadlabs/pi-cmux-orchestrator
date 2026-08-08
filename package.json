@@ -1,0 +1,32 @@
+{
+  "name": "pi-cmux-orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first, secure multi-agent development orchestrator: Pi decides, agentd guarantees.",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "clean": "tsc --build --clean",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm build && pnpm --recursive --stream test",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "schemas:emit": "pnpm build && node packages/protocol/dist/emit-schemas.js",
+    "fixtures:capture": "pnpm build && node packages/testkit/dist/capture-fixtures.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.1",
+    "eslint": "10.8.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.66.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@pi-cmux/policy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fail-closed policy decisions and path containment.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@pi-cmux/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@pi-cmux/testkit": "workspace:*"
+  }
+}
