@@ -69,6 +69,8 @@ describe("driving a real process", () => {
     assert.ok(batch.ok);
     // 1 opening status + 4 logs + 1 closing status.
     assert.equal(batch.value.events.length, 6);
+    assert.equal(batch.value.results.length, 1);
+    assert.equal(batch.value.results[0]?.status, "succeeded");
     assert.equal(batch.value.rejected, 0);
     assert.equal(batch.value.events[0]?.type, "status");
   });
@@ -107,6 +109,20 @@ describe("driving a real process", () => {
     handle.value.cancel();
     const outcome = await handle.value.completed;
     assert.equal(outcome.reason, "cancelled");
+  });
+
+  it("surfaces duplicate terminal results for agentd to reject", async () => {
+    await using dir = await temporaryDirectory();
+    const { stdoutPath } = await runToCompletion(dir.path, [
+      "--emit",
+      "1",
+      "--duplicate-terminal-result",
+    ]);
+
+    const batch = await readEvents(stdoutPath, 0, { atEof: true });
+    assert.ok(batch.ok);
+    assert.equal(batch.value.results.length, 2);
+    assert.equal(batch.value.rejected, 0);
   });
 
   it("reports the pid and start time for durable metadata", async () => {

@@ -24,6 +24,7 @@ import {
   type AgentEvent,
   type AgentTask,
   type AgentdError,
+  unknownCapabilities,
   type Result,
 } from "@pi-cmux/protocol";
 
@@ -79,6 +80,16 @@ export type PolicyDecision = Readonly<{
 
 type Rule = Readonly<{
   name: string;
+  /**
+   * The error code a denial from this rule carries.
+   *
+   * Defaults to `POLICY_DENIED`, which is right for "you may not do this here".
+   * A rule that rejects something the system does not *understand* says so with
+   * its own code instead, because the two call for different responses: one is
+   * a phase or profile decision, the other means the request itself is not
+   * something this build can reason about.
+   */
+  code?: AgentdError["code"];
   /** Returns a denial reason, or `undefined` to allow. */
   evaluate: (
     task: AgentTask,
@@ -141,6 +152,40 @@ const RULES: readonly Rule[] = [
         : undefined,
   },
   {
+    name: "constraints.capabilities-known",
+    code: "CAPABILITY_UNSUPPORTED",
+    evaluate: (task) => {
+      // Fail closed on anything this build does not recognise. An unknown
+      // capability admitted today is a permission recorded as granted that
+      // nothing enforces — and one that starts being enforced the moment some
+      // later phase gives the string a meaning.
+      const unknown = unknownCapabilities(task.constraints.capabilities);
+      return unknown.length === 0
+        ? undefined
+        : `unknown capabilities requested: ${unknown.join(", ")}`;
+    },
+  },
+  {
+    name: "constraints.capabilities-consistent",
+    code: "CAPABILITY_UNSUPPORTED",
+    evaluate: (task) => {
+      // A capability may not grant what the constraints did not declare.
+      // Otherwise `capabilities` becomes a second, unpoliced permission
+      // channel: a task could hold `repo.write` while `mayWrite` is false, and
+      // whichever component consulted the capability list rather than the flag
+      // would be the one that got it wrong.
+      const requested = new Set<string>(task.constraints.capabilities);
+
+      if (requested.has("repo.write") && !task.constraints.mayWrite) {
+        return "'repo.write' was requested but the task declares mayWrite: false";
+      }
+      if (requested.has("net.fetch") && task.constraints.network === "deny") {
+        return "'net.fetch' was requested but the task declares network: deny";
+      }
+      return undefined;
+    },
+  },
+  {
     name: "workspace.allowed-paths-contained",
     evaluate: async (task) => {
       // Every declared write surface must be inside the assigned worktree.
@@ -182,9 +227,13 @@ export async function decide(
     const denial = await rule.evaluate(task, profile);
     if (denial !== undefined) {
       return err(
-        makeError("POLICY_DENIED", "the task was denied by policy", {
-          details: { rule: rule.name, reason: denial },
-        }),
+        makeError(
+          rule.code ?? "POLICY_DENIED",
+          "the task was denied by policy",
+          {
+            details: { rule: rule.name, reason: denial },
+          },
+        ),
       );
     }
   }

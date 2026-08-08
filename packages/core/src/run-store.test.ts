@@ -459,6 +459,14 @@ describe("run lock", () => {
     assert.equal((await store.acquireLock(runId, owner)).ok, true);
   });
 
+  it("treats releasing an absent lock as success", async () => {
+    await using dir = await temporaryDirectory();
+    const store = storeIn(dir.path);
+    const { runId } = expectOk(await store.create(sampleTask()));
+
+    assert.equal((await store.releaseLock(runId)).ok, true);
+  });
+
   it("records the owner so a stale lock is identifiable", async () => {
     await using dir = await temporaryDirectory();
     const store = storeIn(dir.path);

@@ -32,7 +32,7 @@ The fake worker reproduces the process-level failure modes that matter:
 | `--malformed`                            | unparseable lines mid-stream       |
 | `--duplicate-sequence`, `--out-of-order` | ingestion idempotency              |
 | `--flood-bytes`                          | the output ceiling                 |
-| `--no-terminal-event`                    | completion that cannot be inferred |
+| `--no-terminal-result`                   | completion that cannot be inferred |
 | `--exit-code`                            | nonzero exit                       |
 
 Policy in P1 additionally rejects `mayWrite`, `mayCommit`, `sandbox: required`

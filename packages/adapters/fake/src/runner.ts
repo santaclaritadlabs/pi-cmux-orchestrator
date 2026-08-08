@@ -21,7 +21,9 @@ import { open } from "node:fs/promises";
 import {
   makeError,
   parseAgentEvent,
+  parseAgentResult,
   type AgentEvent,
+  type AgentResult,
   type AgentTask,
   type AgentdError,
 } from "@pi-cmux/protocol";
@@ -57,7 +59,8 @@ export type RunHandle = Readonly<{
 
 export type NormalizedBatch = Readonly<{
   events: readonly AgentEvent[];
-  /** Lines that could not be decoded or did not validate as an event. */
+  results: readonly AgentResult[];
+  /** Lines that could not be decoded or validate as either public record. */
   rejected: number;
   /** Byte offset to resume reading from. */
   offset: number;
@@ -130,6 +133,12 @@ export async function start(
   const workerArgv = [
     process.execPath,
     replayWorkerPath(),
+    "--run-id",
+    args.runId,
+    "--task-id",
+    args.task.taskId,
+    "--worktree-path",
+    args.task.workspace.worktreePath,
     ...(options.workerArgs ?? ["--emit", "3"]),
   ];
   const prefix = args.argvPrefix ?? [];
@@ -226,10 +235,11 @@ export async function readEvents(
       rejected += finished.rejected;
     }
 
-    const { events, invalid } = validateRecords(records);
+    const { events, results, invalid } = validateRecords(records);
 
     return ok({
       events,
+      results,
       rejected: rejected + invalid,
       // `stream.offset` counts only bytes consumed as complete records, so a
       // pending fragment is re-read next time rather than skipped.
@@ -249,21 +259,25 @@ export async function readEvents(
  */
 function validateRecords(records: readonly { value: unknown }[]): {
   events: AgentEvent[];
+  results: AgentResult[];
   invalid: number;
 } {
   const events: AgentEvent[] = [];
+  const results: AgentResult[] = [];
   let invalid = 0;
 
   for (const record of records) {
     const parsed = parseAgentEvent(record.value);
     if (parsed.ok) {
       events.push(parsed.value);
-    } else {
-      invalid += 1;
+      continue;
     }
+    const result = parseAgentResult(record.value);
+    if (result.ok) results.push(result.value);
+    else invalid += 1;
   }
 
-  return { events, invalid };
+  return { events, results, invalid };
 }
 
 /**
@@ -277,13 +291,14 @@ export function normalizeStream(raw: string): NormalizedBatch {
   const pushed = stream.push(raw);
   const finished = stream.finish();
 
-  const { events, invalid } = validateRecords([
+  const { events, results, invalid } = validateRecords([
     ...pushed.records,
     ...finished.records,
   ]);
 
   return {
     events,
+    results,
     rejected: pushed.rejected + finished.rejected + invalid,
     offset: stream.offset,
   };

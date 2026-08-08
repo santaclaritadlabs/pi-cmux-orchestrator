@@ -49,6 +49,8 @@ export type ServerOptions = Readonly<{
 export interface DaemonServer {
   readonly socketPath: string;
   readonly token: string;
+  /** Stop admitting connections without waiting for existing clients. */
+  stopAccepting(): void;
   close(): Promise<void>;
 }
 
@@ -72,8 +74,10 @@ export async function startServer(
   const token = options.token ?? randomBytes(32).toString("base64url");
 
   // A stale socket from a crashed daemon would make `listen` fail with
-  // EADDRINUSE. Removing it is safe only because the pid file and the run locks
-  // are what actually prevent two daemons from owning the same state.
+  // EADDRINUSE. Removing it is safe only because the caller already holds the
+  // daemon lock (see `daemon-lock.ts`): a socket at this path with no live
+  // owner behind it is therefore known to be a leftover, not a live daemon's.
+  // Without that lock this unlink would be a takeover, not a cleanup.
   await unlink(options.paths.socketPath).catch(() => undefined);
 
   try {
@@ -91,7 +95,15 @@ export async function startServer(
   }
 
   const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
     handleConnection(socket, options.orchestrator, token, logger);
+  });
+  const sockets = new Set<Socket>();
+  let accepting = true;
+  let closed = false;
+  server.once("close", () => {
+    closed = true;
   });
 
   const listening = await new Promise<Result<undefined, AgentdError>>(
@@ -119,15 +131,21 @@ export async function startServer(
 
   logger.info("rpc socket listening", { socketPath: options.paths.socketPath });
 
+  const stopAccepting = (): void => {
+    if (!accepting) return;
+    accepting = false;
+    server.close();
+  };
+
   return ok({
     socketPath: options.paths.socketPath,
     token,
+    stopAccepting,
     close: async (): Promise<void> => {
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      });
+      stopAccepting();
+      for (const socket of sockets) socket.destroy();
+      if (!closed)
+        await new Promise<void>((resolve) => server.once("close", resolve));
       await unlink(options.paths.socketPath).catch(() => undefined);
       await unlink(options.paths.tokenPath).catch(() => undefined);
     },

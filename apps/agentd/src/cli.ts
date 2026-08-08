@@ -19,6 +19,7 @@ import { createLogger } from "@pi-cmux/observability";
 import { isTerminalRunState } from "@pi-cmux/protocol";
 
 import { connectToDaemon } from "./client.ts";
+import { acquireDaemonLock } from "./daemon-lock.ts";
 import { HostSandboxProvider, SandboxRegistry } from "@pi-cmux/sandbox";
 import { WorktreeManager } from "@pi-cmux/worktrees";
 
@@ -59,15 +60,38 @@ async function commandStart(): Promise<number> {
     return 1;
   }
 
+  // Ownership first. Recovery rewrites run states and the server unlinks the
+  // socket; neither may happen until this daemon knows it is the only one.
+  const lock = await acquireDaemonLock({ lockPath: paths.lockPath });
+  if (!lock.ok) {
+    logger.error("could not claim the runtime directory", {
+      code: lock.error.code,
+      message: lock.error.safeMessage,
+    });
+    return 1;
+  }
+
   const store = new RunStore({ root: paths.stateDir });
 
   // Recovery runs *before* the socket opens. A client must never see a run
   // still claiming RUNNING from a previous incarnation.
-  const report = await recoverRuns({ store, logger });
+  const recovered = await recoverRuns({ store, logger });
+  if (!recovered.ok) {
+    logger.error("recovery could not restore a safe runtime", {
+      code: recovered.error.code,
+      message: recovered.error.safeMessage,
+    });
+    await lock.value.release();
+    return 1;
+  }
+  const report = recovered.value;
   logger.info("recovery complete", {
     inspected: report.inspected,
     orphaned: report.orphaned.length,
-    stillRunning: report.stillRunning.length,
+    terminated: report.terminated.length,
+    // An operator needs to know immediately: these are processes still on the
+    // host that this daemon could neither supervise nor stop.
+    unstoppable: report.terminated.filter((run) => !run.stopped).length,
   });
 
   const repositories = await loadRepositories(paths.repositoriesPath);
@@ -78,6 +102,7 @@ async function commandStart(): Promise<number> {
       code: repositories.error.code,
       message: repositories.error.safeMessage,
     });
+    await lock.value.release();
     return 1;
   }
   logger.info("repository allowlist loaded", {
@@ -109,6 +134,7 @@ async function commandStart(): Promise<number> {
       code: server.error.code,
       message: server.error.safeMessage,
     });
+    await lock.value.release();
     return 1;
   }
 
@@ -120,11 +146,18 @@ async function commandStart(): Promise<number> {
     }),
   );
 
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info("shutting down", { signal });
-    await orchestrator.shutdown();
-    await server.value.close();
-    process.exit(0);
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise !== undefined) return shutdownPromise;
+    shutdownPromise = (async (): Promise<void> => {
+      logger.info("shutting down", { signal });
+      server.value.stopAccepting();
+      await orchestrator.shutdown();
+      await server.value.close();
+      const released = await lock.value.release();
+      process.exit(released.ok ? 0 : 1);
+    })();
+    return shutdownPromise;
   };
 
   process.on("SIGINT", () => void shutdown("SIGINT"));

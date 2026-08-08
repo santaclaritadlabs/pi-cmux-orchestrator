@@ -42,7 +42,6 @@ async function run(
     softTimeoutMs: 60_000,
     hardTimeoutMs: 60_000,
     terminationGraceMs: 300,
-    outputCheckIntervalMs: 50,
     ...rest,
   });
 
@@ -99,12 +98,11 @@ describe("normal completion", () => {
     assert.equal(outcome.reason, "exited");
   });
 
-  it("writes worker output straight to the file, not through the daemon", async () => {
+  it("persists the complete output of a bounded worker", async () => {
     await using dir = await temporaryDirectory();
     const { outcome, stdout } = await run(dir.path, { args: ["--emit", "5"] });
 
-    // The bytes are on disk and the supervisor measured them without ever
-    // holding them: this is what makes restart recovery possible.
+    // The durable file and the supervisor's accounting must agree.
     assert.ok(stdout.length > 0);
     assert.equal(outcome.stdoutBytes, Buffer.byteLength(stdout, "utf8"));
   });
@@ -273,16 +271,65 @@ describe("timeouts", () => {
 describe("output limits", () => {
   it("terminates a worker that floods its output budget", async () => {
     await using dir = await temporaryDirectory();
-    const { outcome } = await run(dir.path, {
+    const { outcome, stdout } = await run(dir.path, {
       args: ["--emit", "0", "--flood-bytes", "3000000", "--hang"],
       maxOutputBytes: 100_000,
-      outputCheckIntervalMs: 20,
       hardTimeoutMs: 30_000,
       softTimeoutMs: 30_000,
     });
 
     assert.equal(outcome.reason, "output_limit");
     assert.ok(outcome.stdoutBytes > 100_000);
+    assert.ok(Buffer.byteLength(stdout, "utf8") <= 100_000);
+  });
+
+  it("terminates a worker that floods stderr", async () => {
+    // stdout stays tiny throughout, so a supervisor that only meters stdout
+    // sees a well-behaved worker while the disk fills up underneath it.
+    await using dir = await temporaryDirectory();
+    const { outcome, stderr } = await run(dir.path, {
+      args: ["--emit", "0", "--flood-stderr-bytes", "3000000", "--hang"],
+      maxOutputBytes: 10_000_000,
+      maxStderrBytes: 100_000,
+      hardTimeoutMs: 30_000,
+      softTimeoutMs: 30_000,
+    });
+
+    assert.equal(outcome.reason, "output_limit");
+    assert.equal(outcome.outputLimitStream, "stderr");
+    assert.ok(outcome.stderrBytes > 100_000);
+    // The stream that behaved is not blamed for the one that did not.
+    assert.ok(outcome.stdoutBytes < 100_000);
+    assert.ok(Buffer.byteLength(stderr, "utf8") <= 100_000);
+  });
+
+  it("catches a short stderr burst even when the worker exits immediately", async () => {
+    await using dir = await temporaryDirectory();
+    const { outcome, stderr } = await run(dir.path, {
+      args: ["--emit", "0", "--flood-stderr-bytes", "3000000"],
+      maxOutputBytes: 10_000_000,
+      maxStderrBytes: 100_000,
+      hardTimeoutMs: 30_000,
+      softTimeoutMs: 30_000,
+    });
+
+    assert.equal(outcome.reason, "output_limit");
+    assert.equal(outcome.outputLimitStream, "stderr");
+    assert.ok(outcome.stderrBytes > 100_000);
+    assert.ok(Buffer.byteLength(stderr, "utf8") <= 100_000);
+  });
+
+  it("names stdout as the stream that overflowed", async () => {
+    await using dir = await temporaryDirectory();
+    const { outcome } = await run(dir.path, {
+      args: ["--emit", "0", "--flood-bytes", "3000000", "--hang"],
+      maxOutputBytes: 100_000,
+      hardTimeoutMs: 30_000,
+      softTimeoutMs: 30_000,
+    });
+
+    assert.equal(outcome.reason, "output_limit");
+    assert.equal(outcome.outputLimitStream, "stdout");
   });
 
   it("leaves a well-behaved worker alone", async () => {
@@ -290,7 +337,6 @@ describe("output limits", () => {
     const { outcome } = await run(dir.path, {
       args: ["--emit", "3"],
       maxOutputBytes: 10_000_000,
-      outputCheckIntervalMs: 20,
     });
 
     assert.equal(outcome.reason, "exited");

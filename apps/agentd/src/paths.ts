@@ -29,7 +29,7 @@ export const MAX_SOCKET_PATH_BYTES = 100;
 
 export const SOCKET_NAME = "pi-agentd.sock";
 export const TOKEN_NAME = "pi-agentd.token";
-export const PID_NAME = "pi-agentd.pid";
+export const LOCK_NAME = "pi-agentd.lock.sqlite";
 
 export const REPOSITORIES_NAME = "repositories.json";
 
@@ -38,7 +38,7 @@ export type DaemonPaths = Readonly<{
   stateDir: string;
   socketPath: string;
   tokenPath: string;
-  pidPath: string;
+  lockPath: string;
   /**
    * Every worktree this daemon creates lives under here — one root, so
    * containment is a single check rather than a per-task argument.
@@ -67,7 +67,7 @@ export function resolveDaemonPaths(
     stateDir,
     socketPath: path.join(runtimeDir, SOCKET_NAME),
     tokenPath: path.join(runtimeDir, TOKEN_NAME),
-    pidPath: path.join(runtimeDir, PID_NAME),
+    lockPath: path.join(runtimeDir, LOCK_NAME),
     worktreeRoot: `${stateDir}-worktrees`,
     repositoriesPath: path.join(stateDir, REPOSITORIES_NAME),
   };
