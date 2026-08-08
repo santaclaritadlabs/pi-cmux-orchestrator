@@ -13,6 +13,7 @@ export * from "./errors.ts";
 export * from "./ids.ts";
 export * from "./primitives.ts";
 export * from "./run-state.ts";
+export * from "./capabilities.ts";
 export * from "./task.ts";
 export * from "./event.ts";
 export * from "./agent-result.ts";

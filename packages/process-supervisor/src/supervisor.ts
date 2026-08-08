@@ -9,11 +9,11 @@
  * Nothing is interpolated, so nothing in a task or a repository can become a
  * command. Enforced at lint level too.
  *
- * **2. The child writes to file descriptors, not pipes.** stdout and stderr are
- * opened as files and handed to the child. `agentd` is not in the data path, so
- * a slow or dead daemon cannot block the worker — and after a daemon restart
- * the output is still on disk to be re-read from a recorded offset. With pipes,
- * a restart severs the stream and the run's outcome becomes unknowable.
+ * **2. Output is bounded before it reaches disk.** stdout and stderr flow
+ * through separate backpressured sinks. Each sink appends only the bytes still
+ * inside its budget, then terminates the process group. A polling file-size
+ * check is not a ceiling: a short-lived worker can fill the disk and exit
+ * between polls.
  *
  * **3. Kills target the process group.** `detached: true` makes the child a
  * group leader, so `kill(-pid)` reaches its children too. A worker that spawns
@@ -25,7 +25,8 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { open, stat, type FileHandle } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
+import { Writable } from "node:stream";
 
 import {
   makeError,
@@ -45,7 +46,9 @@ export type TerminationReason =
   /** The hard timeout elapsed. */
   | "timed_out"
   /** It produced more output than the run is allowed. */
-  | "output_limit";
+  | "output_limit"
+  /** Its captured output could not be persisted. */
+  | "output_error";
 
 export type ProcessOutcome = Readonly<{
   pid: number;
@@ -56,8 +59,19 @@ export type ProcessOutcome = Readonly<{
   reason: TerminationReason;
   /** Whether the advisory soft timeout elapsed before the process finished. */
   softTimeoutElapsed: boolean;
-  /** Bytes observed on stdout, at the last check. */
+  /** Bytes observed on stdout, including the chunk that crossed the limit. */
   stdoutBytes: number;
+  /** Bytes observed on stderr, at the last check. */
+  stderrBytes: number;
+  /**
+   * Which stream ran out of budget, when `reason` is `"output_limit"`.
+   *
+   * Recorded because the two mean different things: an oversized stdout is a
+   * worker talking too much in protocol, while an oversized stderr is usually a
+   * crash loop or a provider dumping diagnostics. Collapsing them into one
+   * "output limit" tells an operator nothing about which to investigate.
+   */
+  outputLimitStream?: "stdout" | "stderr";
 }>;
 
 export type SupervisorOptions = Readonly<{
@@ -67,7 +81,7 @@ export type SupervisorOptions = Readonly<{
   /** Built by `buildWorkerEnvironment`. Never `process.env`. */
   env: Readonly<Record<string, string>>;
 
-  /** The worker appends here directly, via its own fd. */
+  /** The supervisor appends the worker's bounded output here. */
   stdoutPath: string;
   stderrPath: string;
 
@@ -80,9 +94,15 @@ export type SupervisorOptions = Readonly<{
 
   /** Terminate if stdout grows past this. */
   maxOutputBytes?: number;
-  /** How often to check the output size. */
-  outputCheckIntervalMs?: number;
-
+  /**
+   * Terminate if stderr grows past this.
+   *
+   * Budgeted separately, and lower: stderr carries diagnostics rather than the
+   * protocol stream, so it needs far less room, and a single shared allowance
+   * would let a flood of log noise consume the space the run's actual output
+   * needs. Both are bounded because either one alone can fill a disk.
+   */
+  maxStderrBytes?: number;
   clock?: Clock;
   logger?: Logger;
   onSoftTimeout?: () => void;
@@ -90,7 +110,7 @@ export type SupervisorOptions = Readonly<{
 
 const DEFAULT_GRACE_MS = 5_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
-const DEFAULT_OUTPUT_CHECK_MS = 1_000;
+const DEFAULT_MAX_STDERR_BYTES = 8 * 1024 * 1024;
 
 export interface SupervisedProcess {
   readonly pid: number;
@@ -113,7 +133,7 @@ export interface SupervisedProcess {
  * The negative pid is the group. `ESRCH` means it exited between our decision
  * and our signal, which is a normal race, not a failure.
  */
-function killGroup(pid: number, signal: NodeJS.Signals): void {
+export function killGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -127,6 +147,76 @@ function killGroup(pid: number, signal: NodeJS.Signals): void {
       // Nothing further we can do; the caller learns from the exit event.
     }
   }
+}
+
+type OutputStream = "stdout" | "stderr";
+
+type BoundedSink = Readonly<{
+  writable: Writable;
+  completed: Promise<void>;
+  observedBytes: () => number;
+}>;
+
+async function writeAll(handle: FileHandle, buffer: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const written = await handle.write(buffer, offset, buffer.length - offset);
+    if (written.bytesWritten === 0) {
+      throw new Error("output write made no progress");
+    }
+    offset += written.bytesWritten;
+  }
+}
+
+function boundedSink(
+  handle: FileHandle,
+  stream: OutputStream,
+  initialBytes: number,
+  maxBytes: number,
+  onLimit: (stream: OutputStream) => void,
+  onError: (stream: OutputStream, cause: unknown) => void,
+): BoundedSink {
+  let observedBytes = initialBytes;
+  let persistedBytes = initialBytes;
+  let limitReported = false;
+
+  const writable = new Writable({
+    write(chunk: Buffer | string, encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk)
+        ? chunk
+        : Buffer.from(chunk, encoding);
+      observedBytes += buffer.length;
+      const remaining = Math.max(0, maxBytes - persistedBytes);
+      const accepted = buffer.subarray(0, remaining);
+      persistedBytes += accepted.length;
+
+      if (accepted.length < buffer.length && !limitReported) {
+        limitReported = true;
+        onLimit(stream);
+      }
+
+      void writeAll(handle, accepted).then(
+        () => {
+          callback();
+        },
+        (cause: unknown) => {
+          onError(stream, cause);
+          callback(
+            cause instanceof Error ? cause : new Error("output write failed"),
+          );
+        },
+      );
+    },
+  });
+
+  const completed = new Promise<void>((resolve) => {
+    writable.once("finish", resolve);
+    writable.once("error", () => {
+      resolve();
+    });
+  });
+
+  return { writable, completed, observedBytes: () => observedBytes };
 }
 
 /**
@@ -143,17 +233,22 @@ export async function superviseProcess(
   const logger = options.logger ?? nullLogger;
   const graceMs = options.terminationGraceMs ?? DEFAULT_GRACE_MS;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  const outputCheckMs =
-    options.outputCheckIntervalMs ?? DEFAULT_OUTPUT_CHECK_MS;
+  const maxStderrBytes = options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES;
 
   let stdoutHandle: FileHandle | undefined;
   let stderrHandle: FileHandle | undefined;
+  let initialStdoutBytes: number;
+  let initialStderrBytes: number;
 
   try {
     // Append mode: a restarted daemon re-attaching to a run must not truncate
     // output the previous incarnation already recorded.
     stdoutHandle = await open(options.stdoutPath, "a", 0o600);
     stderrHandle = await open(options.stderrPath, "a", 0o600);
+    [initialStdoutBytes, initialStderrBytes] = await Promise.all([
+      stdoutHandle.stat().then((stats) => stats.size),
+      stderrHandle.stat().then((stats) => stats.size),
+    ]);
   } catch (cause) {
     await stdoutHandle?.close();
     await stderrHandle?.close();
@@ -171,9 +266,8 @@ export async function superviseProcess(
       env: { ...options.env },
       // Own process group, so cancellation reaches grandchildren.
       detached: true,
-      // stdin closed: a worker must never block waiting for input nobody will
-      // send. stdout/stderr are plain fds.
-      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+      // stdin is closed. Output is piped through bounded, backpressured sinks.
+      stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
   } catch (cause) {
@@ -210,7 +304,7 @@ export async function superviseProcess(
 
   let reason: TerminationReason = "exited";
   let softTimeoutElapsed = false;
-  let stdoutBytes = 0;
+  let outputLimitStream: OutputStream | undefined;
   let settled = false;
 
   const timers: TimerHandle[] = [];
@@ -240,6 +334,51 @@ export async function superviseProcess(
     );
   };
 
+  const onOutputLimit = (stream: OutputStream): void => {
+    if (reason !== "exited") return;
+    outputLimitStream = stream;
+    runLogger.warn(`worker exceeded its ${stream} budget`, { pid });
+    terminate("output_limit");
+  };
+
+  const onOutputError = (stream: OutputStream, cause: unknown): void => {
+    if (reason !== "exited") return;
+    runLogger.error("worker output could not be persisted", {
+      pid,
+      stream,
+      cause,
+    });
+    terminate("output_error");
+  };
+
+  const stdoutSink = boundedSink(
+    stdoutHandle,
+    "stdout",
+    initialStdoutBytes,
+    maxOutputBytes,
+    onOutputLimit,
+    onOutputError,
+  );
+  const stderrSink = boundedSink(
+    stderrHandle,
+    "stderr",
+    initialStderrBytes,
+    maxStderrBytes,
+    onOutputLimit,
+    onOutputError,
+  );
+
+  if (child.stdout === null || child.stderr === null) {
+    killGroup(pid, "SIGKILL");
+    await stdoutHandle.close();
+    await stderrHandle.close();
+    return err(
+      makeError("WORKER_SPAWN_FAILED", "worker output pipes were not created"),
+    );
+  }
+  child.stdout.pipe(stdoutSink.writable);
+  child.stderr.pipe(stderrSink.writable);
+
   timers.push(
     clock.setTimeout(() => {
       if (settled) return;
@@ -255,47 +394,15 @@ export async function superviseProcess(
     }, options.hardTimeoutMs),
   );
 
-  /** Poll the output size; the daemon is not in the data path, so it must ask. */
-  const scheduleOutputCheck = (): void => {
-    timers.push(
-      clock.setTimeout(() => {
-        if (settled) return;
-        void stat(options.stdoutPath)
-          .then((stats) => {
-            stdoutBytes = stats.size;
-            if (stdoutBytes > maxOutputBytes) {
-              runLogger.warn("worker exceeded its output budget", {
-                pid,
-                stdoutBytes,
-                maxOutputBytes,
-              });
-              terminate("output_limit");
-              return;
-            }
-            scheduleOutputCheck();
-          })
-          .catch(() => {
-            // The file may have been removed under us; nothing to enforce.
-          });
-      }, outputCheckMs),
-    );
-  };
-  scheduleOutputCheck();
-
   const completed = new Promise<ProcessOutcome>((resolve) => {
     child.on("close", (code, signal) => {
       settled = true;
       clearTimers();
 
       void (async (): Promise<void> => {
+        await Promise.all([stdoutSink.completed, stderrSink.completed]);
         await stdoutHandle.close().catch(() => undefined);
         await stderrHandle.close().catch(() => undefined);
-
-        // One last measurement: the process may have written between the final
-        // periodic check and its exit.
-        const finalSize = await stat(options.stdoutPath)
-          .then((stats) => stats.size)
-          .catch(() => stdoutBytes);
 
         resolve({
           pid,
@@ -305,7 +412,9 @@ export async function superviseProcess(
           signal,
           reason,
           softTimeoutElapsed,
-          stdoutBytes: finalSize,
+          stdoutBytes: stdoutSink.observedBytes(),
+          stderrBytes: stderrSink.observedBytes(),
+          ...(outputLimitStream === undefined ? {} : { outputLimitStream }),
         });
       })();
     });
@@ -315,16 +424,23 @@ export async function superviseProcess(
       settled = true;
       clearTimers();
       runLogger.error("worker process error", { pid, error });
-      resolve({
-        pid,
-        startedAtMs,
-        durationMs: clock.now() - startedAtMs,
-        exitCode: null,
-        signal: null,
-        reason,
-        softTimeoutElapsed,
-        stdoutBytes,
-      });
+      void (async (): Promise<void> => {
+        await Promise.all([stdoutSink.completed, stderrSink.completed]);
+        await stdoutHandle.close().catch(() => undefined);
+        await stderrHandle.close().catch(() => undefined);
+        resolve({
+          pid,
+          startedAtMs,
+          durationMs: clock.now() - startedAtMs,
+          exitCode: null,
+          signal: null,
+          reason,
+          softTimeoutElapsed,
+          stdoutBytes: stdoutSink.observedBytes(),
+          stderrBytes: stderrSink.observedBytes(),
+          ...(outputLimitStream === undefined ? {} : { outputLimitStream }),
+        });
+      })();
     });
   });
 

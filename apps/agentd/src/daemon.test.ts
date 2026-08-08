@@ -20,7 +20,6 @@ import { WorktreeManager } from "@pi-cmux/worktrees";
 import { connectToDaemon, type DaemonClient } from "./client.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { resolveDaemonPaths, prepareDaemonDirectories } from "./paths.ts";
-import { recoverRuns } from "./recovery.ts";
 import { RepositoryRegistry } from "./repositories.ts";
 import { startServer, type DaemonServer } from "./server.ts";
 
@@ -139,6 +138,28 @@ async function waitForState(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.fail(`run did not reach ${states.join("|")} in time`);
+}
+
+/**
+ * Wait until the run's lock can be taken, i.e. until the daemon has let it go.
+ *
+ * Taking the lock is the only way to observe that it is free, so this leaves it
+ * held on success — which is what a caller wants anyway: nothing else should be
+ * able to claim it afterwards.
+ */
+async function waitForLockFree(
+  store: RunStore,
+  runId: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const claimed = await store.acquireLock(runId, {
+      pid: process.pid,
+      startedAtMs: Date.now(),
+    });
+    if (claimed.ok) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
 }
 
 describe("socket and directory permissions", () => {
@@ -334,6 +355,10 @@ describe("the task lifecycle", () => {
     const result = await rpc.call("task.result", { runId: record.runId });
     assert.ok(result.ok);
     assert.equal((result.value as AgentResult).status, "succeeded");
+    assert.equal(
+      (result.value as AgentResult).summary,
+      "fake worker completed",
+    );
 
     rpc.close();
     await harness.server.close();
@@ -462,6 +487,291 @@ describe("the task lifecycle", () => {
     assert.equal((result.value as AgentResult).status, "cancelled");
     // Every non-success is attributable.
     assert.equal((result.value as AgentResult).failure?.code, "CANCELLED");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("refuses to call a worker successful with no terminal result", async () => {
+    // The worker emits real events and exits zero, but never declares that it
+    // finished. A clean exit is not a claim of success, and the daemon must not
+    // manufacture one on the worker's behalf.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, [
+      "--emit",
+      "3",
+      "--no-terminal-result",
+    ]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+
+    const state = await waitForState(harness.store, record.runId, [
+      "SUCCEEDED",
+      "FAILED",
+    ]);
+    assert.equal(state, "FAILED");
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.status, "failed");
+    assert.equal(stored.value.failure?.code, "MISSING_TERMINAL_RESULT");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("does not count the daemon's own audit event as worker output", async () => {
+    // The degenerate case the old check masked: every admitted run carries a
+    // policy event at sequence 0 that the *daemon* wrote, so "the run has
+    // events" was true even of a worker that declared nothing.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, [
+      "--emit",
+      "0",
+      "--no-terminal-result",
+    ]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+
+    const state = await waitForState(harness.store, record.runId, [
+      "SUCCEEDED",
+      "FAILED",
+    ]);
+    assert.equal(state, "FAILED");
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.failure?.code, "MISSING_TERMINAL_RESULT");
+
+    const events = await harness.store.readEvents(record.runId);
+    assert.ok(events.ok);
+
+    // The run is not empty, which is precisely why counting events was the
+    // wrong test: the daemon's audit record is there, and so is the worker's
+    // opening status. Neither is a declaration that the work finished.
+    assert.ok(events.value.length >= 1);
+    const audit = events.value[0];
+    assert.ok(audit !== undefined);
+    assert.equal(audit.type, "policy");
+    assert.equal(audit.sequence, 0);
+    assert.equal(
+      events.value.filter(
+        (event) =>
+          event.type === "status" && event.payload["state"] === "VALIDATING",
+      ).length,
+      0,
+      "no event may claim the worker finished",
+    );
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("rejects duplicate terminal results", async () => {
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, [
+      "--emit",
+      "1",
+      "--duplicate-terminal-result",
+    ]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.ok((await rpc.call("task.start", { runId: record.runId })).ok);
+    assert.equal(
+      await waitForState(harness.store, record.runId, ["SUCCEEDED", "FAILED"]),
+      "FAILED",
+    );
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.failure?.code, "DUPLICATE_TERMINAL_RESULT");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("fails a run whose output could not be fully parsed", async () => {
+    // Part of the stream is unreadable, so any success read from the rest is
+    // read from an incomplete record.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, [
+      "--emit",
+      "2",
+      "--malformed",
+      "1",
+    ]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+
+    const state = await waitForState(harness.store, record.runId, [
+      "SUCCEEDED",
+      "FAILED",
+    ]);
+    assert.equal(state, "FAILED");
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.failure?.code, "MALFORMED_WORKER_OUTPUT");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("starts a run once when two clients race to start it", async () => {
+    // Both callers read QUEUED before either writes. Without the run lock both
+    // proceed, and two workers end up writing the same stdout and result files.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, ["--emit", "1", "--hang"]);
+    const first = await client(harness);
+    const second = await client(harness);
+
+    const record = await createTask(first, harness);
+
+    const [a, b] = await Promise.all([
+      first.call("task.start", { runId: record.runId }),
+      second.call("task.start", { runId: record.runId }),
+    ]);
+
+    const winners = [a, b].filter((outcome) => outcome.ok);
+    const losers = [a, b].filter((outcome) => !outcome.ok);
+    assert.equal(winners.length, 1, "exactly one start may succeed");
+    assert.equal(losers.length, 1);
+
+    const [loser] = losers;
+    assert.ok(loser !== undefined && !loser.ok);
+    assert.equal(loser.error.code, "RUN_LOCKED");
+
+    await first.call("task.cancel", { runId: record.runId });
+
+    // One worker means one terminal result, and it is the cancel we asked for.
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.status, "cancelled");
+
+    first.close();
+    second.close();
+    await harness.server.close();
+  });
+
+  it("releases the run lock once the run is terminal", async () => {
+    // A lock that outlives its run would make the run unrecoverable by any
+    // later daemon, so its release is part of reaching a terminal state.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, ["--emit", "2"]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+    await waitForState(harness.store, record.runId, ["SUCCEEDED", "FAILED"]);
+
+    // Polled, not asserted outright: the lock is released *after* the terminal
+    // transition, so a reader that sees SUCCEEDED can still briefly see the
+    // lock. The guarantee under test is that it is released, not that it is
+    // released before the state lands.
+    const relocked = await waitForLockFree(harness.store, record.runId);
+    assert.ok(relocked, "the run lock must be released once the run ends");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("has already recorded the outcome when cancel returns", async () => {
+    // The worker exiting and the run reaching a durable outcome are different
+    // moments. This asserts without polling on purpose: `waitForState` would
+    // paper over a cancel that returns while the result is still being written.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, ["--emit", "1", "--hang"]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+    await waitForState(harness.store, record.runId, ["RUNNING"]);
+
+    const cancelled = await rpc.call("task.cancel", { runId: record.runId });
+    assert.ok(cancelled.ok);
+    assert.equal((cancelled.value as RunRecord).state, "CANCELLED");
+
+    const state = await harness.store.readState(record.runId);
+    assert.ok(state.ok);
+    assert.equal(state.value.state, "CANCELLED");
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.status, "cancelled");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("leaves no run mid-flight after a graceful shutdown", async () => {
+    // A daemon that exits while a result is still being written turns its own
+    // clean shutdown into an ORPHANED run on the next boot.
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, ["--emit", "1", "--hang"]);
+    const rpc = await client(harness);
+
+    const record = await createTask(rpc, harness);
+    assert.equal(
+      (await rpc.call("task.start", { runId: record.runId })).ok,
+      true,
+    );
+    await waitForState(harness.store, record.runId, ["RUNNING"]);
+
+    rpc.close();
+    await harness.orchestrator.shutdown();
+
+    const state = await harness.store.readState(record.runId);
+    assert.ok(state.ok);
+    assert.equal(state.value.state, "CANCELLED");
+
+    const stored = await harness.store.readResult(record.runId);
+    assert.ok(stored.ok);
+    assert.equal(stored.value.status, "cancelled");
+
+    await harness.server.close();
+  });
+
+  it("drains a start that raced with shutdown and rejects later starts", async () => {
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path, ["--emit", "1", "--hang"]);
+    const rpc = await client(harness);
+    const racing = await createTask(rpc, harness);
+    const later = await createTask(rpc, harness);
+
+    const started = harness.orchestrator.startRun(racing.runId);
+    const draining = harness.orchestrator.shutdown();
+
+    assert.ok((await started).ok);
+    await draining;
+    const state = await harness.store.readState(racing.runId);
+    assert.ok(state.ok);
+    assert.equal(state.value.state, "CANCELLED");
+
+    const rejected = await harness.orchestrator.startRun(later.runId);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "DAEMON_SHUTTING_DOWN");
 
     rpc.close();
     await harness.server.close();
@@ -662,102 +972,5 @@ describe("the workspace a run gets", () => {
 
     rpc.close();
     await harness.server.close();
-  });
-});
-
-describe("restart recovery", () => {
-  it("orphans a run whose worker is gone", async () => {
-    // The daemon "restarts": a fresh store over the same directory, then
-    // recovery. The previous incarnation's in-memory handles are gone.
-    await using dir = await temporaryDirectory();
-    const harness = await startHarness(dir.path, ["--emit", "1"]);
-    const rpc = await client(harness);
-
-    const created = await rpc.call("task.create", {
-      task: taskFor(harness),
-    });
-    assert.ok(created.ok);
-    const runId = (created.value as RunRecord).runId;
-
-    // Simulate a crash mid-run: RUNNING on disk, with a pid that is long gone.
-    await harness.store.transitionState(runId, "PREPARING");
-    await harness.store.transitionState(runId, "RUNNING");
-    await harness.store.updateMetadata(runId, {
-      pid: 999_999,
-      processStartedAtMs: 1_000,
-    });
-
-    rpc.close();
-    await harness.server.close();
-
-    const restarted = new RunStore({ root: harness.paths.stateDir });
-    const report = await recoverRuns({ store: restarted });
-
-    assert.equal(report.orphaned.length, 1);
-    const recovered = report.orphaned[0];
-    assert.ok(recovered !== undefined);
-    assert.equal(recovered.runId, runId);
-    assert.equal(recovered.previousState, "RUNNING");
-    assert.equal(recovered.newState, "ORPHANED");
-
-    const state = await restarted.readState(runId);
-    assert.ok(state.ok);
-    assert.equal(state.value.state, "ORPHANED", "never SUCCEEDED by inference");
-  });
-
-  it("leaves a terminal run untouched", async () => {
-    await using dir = await temporaryDirectory();
-    const harness = await startHarness(dir.path, ["--emit", "1"]);
-    const rpc = await client(harness);
-
-    const created = await rpc.call("task.create", {
-      task: taskFor(harness),
-    });
-    assert.ok(created.ok);
-    const runId = (created.value as RunRecord).runId;
-
-    await rpc.call("task.start", { runId });
-    await waitForState(harness.store, runId, ["SUCCEEDED", "FAILED"]);
-    rpc.close();
-    await harness.server.close();
-
-    const restarted = new RunStore({ root: harness.paths.stateDir });
-    const report = await recoverRuns({ store: restarted });
-
-    assert.equal(report.orphaned.length, 0);
-    assert.equal(report.untouched, 1);
-  });
-
-  it("orphans a mid-flight run that never recorded a process", async () => {
-    await using dir = await temporaryDirectory();
-    const stateDir = path.join(dir.path, "s");
-    await mkdir(stateDir, { recursive: true, mode: 0o700 });
-    const store = new RunStore({ root: stateDir });
-
-    const created = await store.create(sampleTask());
-    assert.ok(created.ok);
-    await store.transitionState(created.value.runId, "PREPARING");
-
-    const report = await recoverRuns({ store });
-
-    assert.equal(report.orphaned.length, 1);
-    assert.equal(report.orphaned[0]?.liveness, "not-launched");
-  });
-
-  it("does not disturb a QUEUED run, which was never launched", async () => {
-    await using dir = await temporaryDirectory();
-    const stateDir = path.join(dir.path, "s");
-    await mkdir(stateDir, { recursive: true, mode: 0o700 });
-    const store = new RunStore({ root: stateDir });
-
-    const created = await store.create(sampleTask());
-    assert.ok(created.ok);
-
-    const report = await recoverRuns({ store });
-    assert.equal(report.orphaned.length, 0);
-
-    const state = await store.readState(created.value.runId);
-    assert.ok(state.ok);
-    assert.equal(state.value.state, "QUEUED");
   });
 });

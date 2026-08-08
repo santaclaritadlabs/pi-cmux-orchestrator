@@ -9,7 +9,7 @@
  *
  * Every failure mode here maps to a case CLAUDE.md requires covered:
  * malformed NDJSON, partial records, duplicate and out-of-order events,
- * oversized output, a missing terminal event, and a hung process.
+ * oversized output, a missing terminal result, and a hung process.
  *
  * Run: `node packages/testkit/dist/replay.js --emit 5 --delay-ms 10`
  */
@@ -20,6 +20,7 @@ import { createInterface } from "node:readline";
 import {
   encodeJsonLine,
   type AgentEvent,
+  type AgentResult,
   PROTOCOL_VERSION,
 } from "@pi-cmux/protocol";
 
@@ -57,6 +58,28 @@ function makeEvent(
 
 function emitEvent(event: AgentEvent): void {
   const encoded = encodeJsonLine(event);
+  if (encoded.ok) write(encoded.value);
+}
+
+function terminalResult(options: ReplayOptions): AgentResult {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    taskId: options.taskId,
+    runId: options.runId,
+    status: "succeeded",
+    summary: "fake worker completed",
+    exitCode: options.exitCode,
+    findings: [],
+    tests: [],
+    changedFiles: [],
+    artifacts: [],
+    changes: { worktreePath: options.worktreePath, dirty: false },
+    warnings: [],
+  };
+}
+
+function emitResult(result: AgentResult): void {
+  const encoded = encodeJsonLine(result);
   if (encoded.ok) write(encoded.value);
 }
 
@@ -138,13 +161,27 @@ async function emitSynthetic(options: ReplayOptions): Promise<void> {
     }
   }
 
-  if (!options.noTerminalEvent) {
+  if (options.floodStderrBytes > 0) {
+    // Not events: stderr carries no protocol content, which is exactly why it
+    // needs its own ceiling — nothing downstream would ever parse this.
+    const chunk = `${"e".repeat(1023)}\n`;
+    let written = 0;
+    while (written < options.floodStderrBytes) {
+      process.stderr.write(chunk);
+      written += chunk.length;
+    }
+  }
+
+  if (!options.noTerminalResult) {
     emitEvent(
       makeEvent(options, sequence, "status", {
         state: "VALIDATING",
         detail: "worker finished",
       }),
     );
+    const result = terminalResult(options);
+    emitResult(result);
+    if (options.duplicateTerminalResult) emitResult(result);
   }
 
   if (options.partialLine) {

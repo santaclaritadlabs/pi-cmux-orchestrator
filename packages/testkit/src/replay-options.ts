@@ -16,6 +16,8 @@ export type ReplayOptions = Readonly<{
   emit: number;
   runId: string;
   taskId: string;
+  /** Assigned worktree, copied into the worker's terminal result claim. */
+  worktreePath: string;
   /** Delay between records; lets a test cancel mid-stream deterministically. */
   delayMs: number;
   /** Delay before the first record. */
@@ -29,12 +31,22 @@ export type ReplayOptions = Readonly<{
   ignoreSigterm: boolean;
   /** Finish with a truncated record, as a killed process would. */
   partialLine: boolean;
-  /** Emit no terminal event, so completion cannot be inferred from the stream. */
-  noTerminalEvent: boolean;
+  /** Emit no terminal result, so completion cannot be inferred from the stream. */
+  noTerminalResult: boolean;
+  /** Emit the terminal result twice, which the adapter must reject. */
+  duplicateTerminalResult: boolean;
   /** Inject this many unparseable lines among the valid ones. */
   malformedLines: number;
   /** Emit at least this many bytes, to trip the output ceiling. */
   floodBytes: number;
+  /**
+   * Write at least this many bytes to stderr.
+   *
+   * The stdout flood models a talkative worker; this models the other disk
+   * exhaustion path — a crash loop or a provider dumping diagnostics — which
+   * carries no protocol content and so is bounded separately.
+   */
+  floodStderrBytes: number;
   /** Emit a duplicate sequence number. */
   duplicateSequence: boolean;
   /** Emit sequence numbers out of order. */
@@ -47,15 +59,18 @@ const DEFAULTS: ReplayOptions = {
   emit: 3,
   runId: "run_01JQZX3K5T7V9B2N4M6P8R0AWC",
   taskId: "AUTH-41",
+  worktreePath: "/tmp/pi-cmux-fake-worktree",
   delayMs: 0,
   startupDelayMs: 0,
   exitCode: 0,
   hang: false,
   ignoreSigterm: false,
   partialLine: false,
-  noTerminalEvent: false,
+  noTerminalResult: false,
+  duplicateTerminalResult: false,
   malformedLines: 0,
   floodBytes: 0,
+  floodStderrBytes: 0,
   duplicateSequence: false,
   outOfOrder: false,
 };
@@ -64,7 +79,8 @@ const BOOLEAN_FLAGS = {
   "--hang": "hang",
   "--ignore-sigterm": "ignoreSigterm",
   "--partial-line": "partialLine",
-  "--no-terminal-event": "noTerminalEvent",
+  "--no-terminal-result": "noTerminalResult",
+  "--duplicate-terminal-result": "duplicateTerminalResult",
   "--duplicate-sequence": "duplicateSequence",
   "--out-of-order": "outOfOrder",
 } as const;
@@ -76,6 +92,7 @@ const NUMBER_FLAGS = {
   "--exit-code": "exitCode",
   "--malformed": "malformedLines",
   "--flood-bytes": "floodBytes",
+  "--flood-stderr-bytes": "floodStderrBytes",
 } as const;
 
 const STRING_FLAGS = {
@@ -83,6 +100,7 @@ const STRING_FLAGS = {
   "--run-id": "runId",
   "--task-id": "taskId",
   "--stderr": "stderr",
+  "--worktree-path": "worktreePath",
 } as const;
 
 function isKeyOf<T extends object>(

@@ -44,6 +44,7 @@ import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
 import type { SandboxPlacement, SandboxRegistry } from "@pi-cmux/sandbox";
 import type { WorktreeManager } from "@pi-cmux/worktrees";
 
+import { processOwner } from "./daemon-lock.ts";
 import type { RepositoryRegistry } from "./repositories.ts";
 
 export type OrchestratorOptions = Readonly<{
@@ -80,6 +81,27 @@ export class Orchestrator {
 
   /** Live worker handles, by run. Empty after a restart — that is the point. */
   readonly #running = new Map<string, RunHandle>();
+
+  /**
+   * In-flight finalisations, by run.
+   *
+   * A worker exiting and a run *reaching a durable outcome* are two different
+   * moments, and everything between them — draining stdout, observing the
+   * worktree, writing the result, transitioning state — happens after the
+   * process is already gone. Anything that waits only on the process therefore
+   * waits on the wrong thing: it would return while the run is still being
+   * written, and a shutdown at that moment leaves a non-terminal run that the
+   * next boot can only classify as ORPHANED.
+   *
+   * So the finalisation is tracked as a promise, not left as a bare `void`
+   * chain, and `cancelRun` and `shutdown` await it.
+   */
+  readonly #finalizing = new Map<string, Promise<void>>();
+
+  /** Starts admitted before shutdown set its gate, but not settled yet. */
+  readonly #starting = new Set<Promise<Result<RunRecord, AgentdError>>>();
+  #shuttingDown = false;
+  #shutdownPromise: Promise<void> | undefined;
 
   /** Probed once: whether any provider can enforce `sandbox: "required"`. */
   #isolationAvailable: boolean | undefined;
@@ -232,9 +254,62 @@ export class Orchestrator {
    * RUNNING, so a crash in between leaves a record recovery can check rather
    * than a running process nothing knows about.
    */
-  public async startRun(
-    runId: string,
-  ): Promise<Result<RunRecord, AgentdError>> {
+  public startRun(runId: string): Promise<Result<RunRecord, AgentdError>> {
+    if (this.#shuttingDown) {
+      return Promise.resolve(
+        err(
+          makeError(
+            "DAEMON_SHUTTING_DOWN",
+            "the daemon is shutting down and is not accepting new runs",
+          ),
+        ),
+      );
+    }
+
+    const starting = this.#startWithLock(runId);
+    this.#starting.add(starting);
+    void starting.then(
+      () => this.#starting.delete(starting),
+      () => this.#starting.delete(starting),
+    );
+    return starting;
+  }
+
+  async #startWithLock(runId: string): Promise<Result<RunRecord, AgentdError>> {
+    // Exclusive from before the first read. `transitionState` is a read
+    // followed by a replace, so without this two concurrent `task.start` calls
+    // can both observe QUEUED, both write PREPARING, and both spawn a worker
+    // into the same stdout and result files — with only one of the two handles
+    // surviving in `#running` to be cancelled.
+    //
+    // `acquireLock` is `O_EXCL`, so the claim itself is atomic: the loser is
+    // told RUN_LOCKED rather than silently queued behind the winner.
+    const locked = await this.#store.acquireLock(runId, processOwner());
+    if (!locked.ok) return locked;
+
+    let keepLock = false;
+    try {
+      const started = await this.#startLocked(runId);
+      keepLock = started.ok;
+      return started;
+    } finally {
+      // The lock outlives this call in exactly one case: a worker is now
+      // running under it, and finalisation releases it once the run is durably
+      // terminal. `finally` also covers an unexpected exception in a launch
+      // dependency; a programmer defect must not strand operational state.
+      if (!keepLock) {
+        const released = await this.#store.releaseLock(runId);
+        if (!released.ok) {
+          this.#logger.error("could not release a failed run start's lock", {
+            runId,
+            code: released.error.code,
+          });
+        }
+      }
+    }
+  }
+
+  async #startLocked(runId: string): Promise<Result<RunRecord, AgentdError>> {
     const task = await this.#store.readTask(runId);
     if (!task.ok) return task;
 
@@ -271,21 +346,58 @@ export class Orchestrator {
       pid: handle.value.pid,
       processStartedAtMs: handle.value.startedAtMs,
     });
-    if (!metadata.ok) return metadata;
+    if (!metadata.ok) {
+      return await this.#abandonLaunch(
+        runId,
+        task.value,
+        handle.value,
+        metadata.error,
+      );
+    }
 
     const running = await this.#store.transitionState(runId, "RUNNING");
-    if (!running.ok) return running;
+    if (!running.ok) {
+      return await this.#abandonLaunch(
+        runId,
+        task.value,
+        handle.value,
+        running.error,
+      );
+    }
 
     this.#running.set(runId, handle.value);
-    // Fire-and-forget is deliberate and must never be silent: the completion
-    // handler is the only thing that produces a terminal state.
-    void handle.value.completed
-      .then(async (outcome) => {
+
+    // Started here, awaited elsewhere. `startRun` must return as soon as the
+    // run is RUNNING — a caller asking to start a task is not asking to wait
+    // for it — but the daemon still owes this run a terminal state, so the
+    // promise is retained rather than dropped. See `#finalizing`.
+    const finished = (async (): Promise<void> => {
+      try {
+        const outcome = await handle.value.completed;
         await this.#finalize(runId, task.value, outcome);
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
         this.#logger.error("run finalisation failed", { runId, error });
-      });
+      } finally {
+        this.#finalizing.delete(runId);
+        // Released last, *after* the terminal transition, because the lock
+        // guards mutation and that transition is the run's final mutation.
+        //
+        // The consequence is that a terminal state does not by itself imply an
+        // unlocked run: an observer polling for SUCCEEDED can win the race to
+        // look. Nothing in the daemon depends on the reverse — a terminal run
+        // is never started again — and boot recovery clears leftover locks, so
+        // the alternative ordering would trade a harmless gap for a real one
+        // where a crash could leave an unlocked run still mid-flight.
+        const released = await this.#store.releaseLock(runId);
+        if (!released.ok) {
+          this.#logger.error("could not release a finalized run's lock", {
+            runId,
+            code: released.error.code,
+          });
+        }
+      }
+    })();
+    this.#finalizing.set(runId, finished);
 
     return ok(running.value);
   }
@@ -372,6 +484,42 @@ export class Orchestrator {
       }),
     );
     await this.#store.transitionState(runId, "FAILED");
+  }
+
+  /**
+   * Stop a worker the daemon failed to record.
+   *
+   * This is the one launch failure where a process already exists that nothing
+   * is tracking: the pid could not be persisted, or the run could not be moved
+   * to RUNNING, so neither this daemon nor a later recovery pass has any record
+   * to attribute the process to. Killing it first is therefore the priority —
+   * an unrecorded worker is precisely the "untracked process" the launch order
+   * exists to prevent.
+   *
+   * Unlike `#failBeforeLaunch` the worktree is kept: something did execute.
+   */
+  async #abandonLaunch(
+    runId: string,
+    task: AgentTask,
+    handle: RunHandle,
+    error: AgentdError,
+  ): Promise<Result<RunRecord, AgentdError>> {
+    this.#logger.error("could not record a launched worker; stopping it", {
+      runId,
+      code: error.code,
+    });
+
+    handle.cancel();
+    await handle.completed;
+
+    const { changes } = await this.#closeWorkspace(runId, task);
+    await this.#store.writeResult(
+      runId,
+      this.#failureResult(task, runId, error, "failed", changes),
+    );
+    await this.#store.transitionState(runId, "FAILED");
+
+    return err(error);
   }
 
   /**
@@ -527,12 +675,35 @@ export class Orchestrator {
       return;
     }
     if (outcome.reason === "output_limit") {
+      // Which stream overflowed is the difference between "the worker talked
+      // too much in protocol" and "the worker was crash-looping into stderr",
+      // so it is recorded rather than flattened into one opaque limit.
+      this.#logger.warn("run exceeded its output budget", {
+        runId,
+        stream: outcome.outputLimitStream ?? "unknown",
+        stdoutBytes: outcome.stdoutBytes,
+        stderrBytes: outcome.stderrBytes,
+      });
       await this.#terminate(
         runId,
         task,
         "FAILED",
         "failed",
         "OUTPUT_LIMIT_EXCEEDED",
+        changes,
+        outcome.outputLimitStream === undefined
+          ? []
+          : [`the ${outcome.outputLimitStream} budget was exhausted`],
+      );
+      return;
+    }
+    if (outcome.reason === "output_error") {
+      await this.#terminate(
+        runId,
+        task,
+        "FAILED",
+        "failed",
+        "STORE_IO_FAILED",
         changes,
       );
       return;
@@ -552,39 +723,86 @@ export class Orchestrator {
     const validating = await this.#store.transitionState(runId, "VALIDATING");
     if (!validating.ok) return;
 
-    // P1's validation: the stream must contain at least one event, and the
-    // worker must not have ended mid-record. A richer check arrives with the
-    // real adapters; what matters now is that *something* is checked.
-    const events = await this.#store.readEvents(runId);
-    const usable = events.ok && events.value.length > 0;
-    const clean = batch.ok && batch.value.rejected === 0;
-
-    if (!usable || !clean) {
+    // What a zero exit code establishes is that the process ended tidily. It
+    // says nothing about whether the *work* finished, and CLAUDE.md is explicit
+    // that a worker's claim of success is not proof of it. So success has to be
+    // read from the AgentResult the worker actually produced.
+    // A line the parser rejected means part of the stream is unreadable, so
+    // any conclusion drawn from the rest is drawn from an incomplete record.
+    if (!batch.ok || batch.value.rejected > 0) {
       await this.#terminate(
         runId,
         task,
         "FAILED",
         "failed",
-        "MISSING_TERMINAL_EVENT",
+        "MALFORMED_WORKER_OUTPUT",
         changes,
       );
       return;
     }
 
-    // Result first, then the terminal state. See `#terminate`.
+    const terminal = batch.value.results;
+
+    if (terminal.length === 0) {
+      await this.#terminate(
+        runId,
+        task,
+        "FAILED",
+        "failed",
+        "MISSING_TERMINAL_RESULT",
+        changes,
+      );
+      return;
+    }
+
+    if (terminal.length > 1) {
+      // "A worker may emit progress but only one terminal AgentResult is
+      // accepted." Two terminal markers make the run's outcome ambiguous, and
+      // picking one would be inventing the answer.
+      await this.#terminate(
+        runId,
+        task,
+        "FAILED",
+        "failed",
+        "DUPLICATE_TERMINAL_RESULT",
+        changes,
+      );
+      return;
+    }
+
+    const workerResult = terminal.at(0);
+    if (workerResult === undefined) {
+      await this.#terminate(
+        runId,
+        task,
+        "FAILED",
+        "failed",
+        "MALFORMED_WORKER_OUTPUT",
+        changes,
+      );
+      return;
+    }
+    if (workerResult.taskId !== task.taskId || workerResult.runId !== runId) {
+      await this.#terminate(
+        runId,
+        task,
+        "FAILED",
+        "failed",
+        "MALFORMED_WORKER_OUTPUT",
+        changes,
+      );
+      return;
+    }
+
+    const state = workerResult.status === "succeeded" ? "SUCCEEDED" : "FAILED";
+
+    // Preserve the worker's claims, but replace fields only agentd can observe.
     await this.#store.writeResult(runId, {
-      protocolVersion: PROTOCOL_VERSION,
-      taskId: task.taskId,
-      runId,
-      status: "succeeded",
-      summary: `worker completed with ${String(events.value.length)} events`,
+      ...workerResult,
       exitCode: outcome.exitCode,
-      findings: [],
-      tests: [],
-      changedFiles: [],
-      artifacts: [],
       changes,
       warnings: [
+        ...workerResult.warnings,
         ...(outcome.softTimeoutElapsed ? ["soft timeout elapsed"] : []),
         // Success with an unobservable worktree is still success, but the
         // change summary is then a default rather than an observation, and
@@ -594,7 +812,7 @@ export class Orchestrator {
           : ["the worktree could not be inspected at completion"]),
       ],
     });
-    await this.#store.transitionState(runId, "SUCCEEDED");
+    await this.#store.transitionState(runId, state);
   }
 
   /**
@@ -617,6 +835,7 @@ export class Orchestrator {
     status: AgentResult["status"],
     code: AgentdError["code"],
     changes: ResultChanges,
+    warnings: readonly string[] = [],
   ): Promise<void> {
     await this.#store.writeResult(
       runId,
@@ -626,6 +845,7 @@ export class Orchestrator {
         makeError(code, `the run ended: ${code}`),
         status,
         changes,
+        warnings,
       ),
     );
     await this.#store.transitionState(runId, state);
@@ -637,6 +857,7 @@ export class Orchestrator {
     error: AgentdError,
     status: AgentResult["status"],
     changes: ResultChanges,
+    warnings: readonly string[] = [],
   ): AgentResult {
     return {
       protocolVersion: PROTOCOL_VERSION,
@@ -649,7 +870,7 @@ export class Orchestrator {
       changedFiles: [],
       artifacts: [],
       changes,
-      warnings: [],
+      warnings: [...warnings],
       failure: {
         code: error.code,
         safeMessage: error.safeMessage,
@@ -674,8 +895,18 @@ export class Orchestrator {
       );
     }
 
+    // Captured before the await: the finalisation removes itself from the map
+    // when it completes, so looking it up afterwards could miss it entirely.
+    const finished = this.#finalizing.get(runId);
+
     handle.cancel();
     await handle.completed;
+
+    // The process has exited, but the run has not yet been recorded as
+    // cancelled. Returning here would hand the caller a state that still says
+    // RUNNING for a cancel it just successfully requested.
+    if (finished !== undefined) await finished;
+
     return await this.#store.readState(runId);
   }
 
@@ -696,14 +927,45 @@ export class Orchestrator {
     return await this.#store.readEvents(runId, sinceSequence);
   }
 
-  /** Stop supervising, without pretending the workers stopped too. */
+  /**
+   * Stop supervising, leaving every run this daemon owns durably terminal.
+   *
+   * Cancelling is not enough. A worker that has exited still has a result to
+   * write, and a daemon that exits at that moment turns its own clean shutdown
+   * into an indeterminate outcome: the next boot finds a dead pid under a
+   * non-terminal run and can only mark it ORPHANED. So the finalisations are
+   * awaited, not just the processes — CLAUDE.md requires cancellation to
+   * produce a durable terminal state, and an intentional shutdown is the one
+   * case where there is no excuse for failing to.
+   *
+   * Cancellation is signalled to every run first and awaited collectively, so
+   * shutdown costs one termination grace period rather than one per run.
+   */
   public async shutdown(): Promise<void> {
+    if (this.#shutdownPromise !== undefined) {
+      await this.#shutdownPromise;
+      return;
+    }
+    this.#shuttingDown = true;
+    this.#shutdownPromise = this.#drain();
+    await this.#shutdownPromise;
+  }
+
+  async #drain(): Promise<void> {
+    await Promise.allSettled([...this.#starting]);
+    const pending = [...this.#finalizing.values()];
+
     for (const [runId, handle] of this.#running) {
       this.#logger.warn("daemon shutting down with a live run", { runId });
       handle.cancel();
-      await handle.completed;
     }
+
+    // Each finalisation begins by awaiting its own worker, so this covers both
+    // the process exits and the durable writes that follow them.
+    await Promise.all(pending);
+
     this.#running.clear();
+    this.#finalizing.clear();
   }
 
   public liveRunIds(): readonly string[] {
