@@ -69,6 +69,22 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/adapters/codex:
+    dependencies:
+      '@pi-cmux/observability':
+        specifier: workspace:*
+        version: link:../../observability
+      '@pi-cmux/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@pi-cmux/testkit':
+        specifier: workspace:*
+        version: link:../../testkit
+
   packages/adapters/fake:
     dependencies:
       '@pi-cmux/observability':
