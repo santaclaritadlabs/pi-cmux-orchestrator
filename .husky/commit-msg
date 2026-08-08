@@ -1,3 +1,23 @@
 #!/bin/sh
-# Validate the commit message against the convention in docs/commits.md.
+# Strip AI-agent attribution trailers (e.g. "Co-Authored-By: Claude Opus 5")
+# from the commit message, as required by CLAUDE.md ("Git and worktree
+# policy"). The trailer is removed, not rejected, so the commit proceeds
+# without it. Human co-author trailers are preserved. Do not bypass with
+# --no-verify.
+#
+# Then validate the (possibly stripped) message against the convention in
+# docs/commits.md.
+MSG_FILE="$1"
+if [ -f "$MSG_FILE" ]; then
+  tmp="${MSG_FILE}.coauth.tmp"
+  # /I makes the match case-insensitive on GNU and BSD sed alike.
+  sed -E '/^Co-Authored-By:.*(claude|anthropic|codex|cursor|copilot|gemini|gpt|openai|antigravity)/Id' "$MSG_FILE" > "$tmp"
+  if cmp -s "$MSG_FILE" "$tmp"; then
+    rm -f "$tmp"
+  else
+    mv "$tmp" "$MSG_FILE"
+    echo "commit-msg: removed AI co-author attribution trailer"
+  fi
+fi
+
 pnpm exec commitlint --edit "$1"

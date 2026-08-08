@@ -155,6 +155,7 @@ Protocol rules:
 - Do not share a worktree between concurrent tasks.
 - Capture initial and final HEAD, dirty state, and file-change summary. Cleanup must be explicit, retryable, and never delete a worktree whose identity or task ownership cannot be proven.
 - Use commits as an optional handoff artifact; `agentd` remains authoritative for task state. Do not infer completion from Git alone.
+- Never add `Co-Authored-By` (or equivalent attribution) trailers crediting Claude or any other AI assistant. Claude Code's `attribution.commit` setting is disabled, and the `.husky/commit-msg` hook strips such trailers automatically; do not bypass it with `--no-verify`.
 
 ## Commit convention
 
