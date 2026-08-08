@@ -20,6 +20,7 @@ import { open } from "node:fs/promises";
 
 import {
   makeError,
+  NdjsonStream,
   parseAgentEvent,
   type AgentEvent,
   type AgentTask,
@@ -34,8 +35,6 @@ import {
 } from "@pi-cmux/process-supervisor";
 import { replayWorkerPath } from "@pi-cmux/testkit";
 import { err, ok, type Result } from "@pi-cmux/protocol";
-
-import { NdjsonStream } from "./ndjson-stream.ts";
 
 export type AgentCapabilities = Readonly<{
   kind: "fake";

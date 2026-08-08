@@ -17,4 +17,5 @@ export * from "./task.ts";
 export * from "./event.ts";
 export * from "./agent-result.ts";
 export * from "./codec.ts";
+export * from "./ndjson-stream.ts";
 export * from "./samples.ts";
