@@ -66,6 +66,7 @@ async function startHarness(
     ]),
     worktrees: new WorktreeManager({ root: paths.worktreeRoot }),
     sandbox: new SandboxRegistry([new HostSandboxProvider()]),
+    workerHomeRoot: paths.workerHomeRoot,
     workerArgs,
   });
 

@@ -138,6 +138,7 @@ async function commandStart(): Promise<number> {
     repositories: repositories.value,
     worktrees,
     sandbox,
+    workerHomeRoot: paths.workerHomeRoot,
     logger,
   });
   const server = await startServer({ paths, orchestrator, logger });
@@ -308,90 +309,131 @@ async function commandVerify(): Promise<number> {
       repositories,
       worktrees,
       sandbox,
+      // Scratch-local, like every other root here — a smoke test must not
+      // touch (or depend on) the real operator's worker-home state.
+      workerHomeRoot: path.join(scratch, "worker-home"),
       logger,
     });
 
-    const task = sampleTask({
-      taskId: "task_01JQZXVERIFY00000000000A",
-      worker: { kind: "fake", profile: "default" },
-      workspace: {
-        repoId: "verify",
-        worktreePath: path.join(scratch, "worktrees", "verify-1"),
-        baseRef: "main",
-      },
-      constraints: {
-        allowedPaths: [path.join(scratch, "worktrees", "verify-1")],
-        forbiddenPaths: [],
-        network: "deny",
-        networkAllowlist: [],
-        sandbox: "preferred",
-        mayWrite: true,
-        mayCommit: false,
-        mayPush: false,
-        capabilities: [],
-      },
-    });
+    // Once the orchestrator exists it owns a worker-capable process; every
+    // exit path below must reach `shutdown()`, including a poll failure, or
+    // the run (and any live worker) leaks past this function returning.
+    try {
+      const task = sampleTask({
+        taskId: "task_01JQZXVERIFY00000000000A",
+        worker: { kind: "fake", profile: "default" },
+        workspace: {
+          repoId: "verify",
+          worktreePath: path.join(scratch, "worktrees", "verify-1"),
+          baseRef: "main",
+        },
+        constraints: {
+          allowedPaths: [path.join(scratch, "worktrees", "verify-1")],
+          forbiddenPaths: [],
+          network: "deny",
+          networkAllowlist: [],
+          sandbox: "preferred",
+          mayWrite: true,
+          mayCommit: false,
+          mayPush: false,
+          capabilities: [],
+        },
+      });
 
-    const created = await orchestrator.createTask(task);
-    if (!created.ok) {
-      process.stderr.write(
-        `verify: could not create the task: ${created.error.safeMessage}\n`,
-      );
-      return 1;
-    }
-    const started = await orchestrator.startRun(created.value.runId);
-    if (!started.ok) {
-      process.stderr.write(
-        `verify: could not start the task: ${started.error.safeMessage}\n`,
-      );
-      return 1;
-    }
-
-    const deadline = Date.now() + 30_000;
-    let final = started.value;
-    while (!isTerminalRunState(final.state) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const polled = await orchestrator.status(created.value.runId);
-      if (!polled.ok) {
+      const created = await orchestrator.createTask(task);
+      if (!created.ok) {
         process.stderr.write(
-          `verify: could not poll the task: ${polled.error.safeMessage}\n`,
+          `verify: could not create the task: ${created.error.safeMessage}\n`,
         );
         return 1;
       }
-      final = polled.value;
-    }
+      const started = await orchestrator.startRun(created.value.runId);
+      if (!started.ok) {
+        process.stderr.write(
+          `verify: could not start the task: ${started.error.safeMessage}\n`,
+        );
+        return 1;
+      }
 
-    await orchestrator.shutdown();
+      const deadline = Date.now() + 30_000;
+      let final = started.value;
+      while (!isTerminalRunState(final.state) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const polled = await orchestrator.status(created.value.runId);
+        if (!polled.ok) {
+          process.stderr.write(
+            `verify: could not poll the task: ${polled.error.safeMessage}\n`,
+          );
+          return 1;
+        }
+        final = polled.value;
+      }
 
-    if (final.state !== "SUCCEEDED") {
-      process.stderr.write(
-        `verify: FAILED — the fake worker did not succeed (state: ${final.state})\n`,
+      if (final.state !== "SUCCEEDED") {
+        process.stderr.write(
+          `verify: FAILED — the fake worker did not succeed (state: ${final.state})\n`,
+        );
+        return 1;
+      }
+
+      out(
+        "verify: OK — daemon booted, admitted a task, ran the fake worker to completion",
       );
-      return 1;
+      return 0;
+    } finally {
+      await orchestrator.shutdown();
     }
-
-    out(
-      "verify: OK — daemon booted, admitted a task, ran the fake worker to completion",
-    );
-    return 0;
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
 }
 
+/** Timeout for the scratch-repo git calls below: this is a smoke test, not a task. */
+const VERIFY_GIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Isolated from the operator's own git config, same reasoning as
+ * `buildWorkerEnvironment`: an inherited `commit.gpgsign=true` would hang
+ * this on a GPG prompt with no TTY, forever in CI. `-c commit.gpgsign=false`
+ * on the commit is defense-in-depth in case a caller ever merges these in
+ * with an inherited environment.
+ */
+const VERIFY_GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+};
+
 /** A one-commit repository, just enough for `baseRef: "main"` to resolve. */
 function initScratchRepo(repoPath: string): void {
-  execFileSync("git", ["init", "--quiet", "--initial-branch=main", repoPath]);
-  execFileSync("git", ["commit", "--quiet", "--allow-empty", "-m", "verify"], {
-    cwd: repoPath,
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: "agentd-verify",
-      GIT_AUTHOR_EMAIL: "agentd-verify@localhost",
-      GIT_COMMITTER_NAME: "agentd-verify",
-      GIT_COMMITTER_EMAIL: "agentd-verify@localhost",
+  execFileSync(
+    "git",
+    ["init", "--quiet", "--initial-branch=main", "--template=", repoPath],
+    { timeout: VERIFY_GIT_TIMEOUT_MS, env: VERIFY_GIT_ENV },
+  );
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "verify",
+    ],
+    {
+      cwd: repoPath,
+      timeout: VERIFY_GIT_TIMEOUT_MS,
+      env: {
+        ...VERIFY_GIT_ENV,
+        GIT_AUTHOR_NAME: "agentd-verify",
+        GIT_AUTHOR_EMAIL: "agentd-verify@localhost",
+        GIT_COMMITTER_NAME: "agentd-verify",
+        GIT_COMMITTER_EMAIL: "agentd-verify@localhost",
+      },
     },
-  });
+  );
 }
 
 async function commandLogs(argv: readonly string[]): Promise<number> {

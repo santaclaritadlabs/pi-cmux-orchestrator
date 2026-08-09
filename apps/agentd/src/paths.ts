@@ -50,6 +50,17 @@ export type DaemonPaths = Readonly<{
    * the two live next to each other instead.
    */
   worktreeRoot: string;
+  /**
+   * Every worker's isolated, persistent `HOME` lives under here, one
+   * subdirectory per worker kind (`<workerHomeRoot>/claude`, `.../cursor`, …).
+   *
+   * A sibling of the state directory for the same reason `worktreeRoot` is:
+   * a worker's `HOME` is itself a write surface (`~/.claude/`, session files,
+   * shell config), so it must sit outside anything the sandbox denylist would
+   * refuse to let a worker touch, and outside the run store a worker must
+   * never be able to forge.
+   */
+  workerHomeRoot: string;
   /** The operator's repository allowlist. */
   repositoriesPath: string;
 }>;
@@ -69,6 +80,7 @@ export function resolveDaemonPaths(
     tokenPath: path.join(runtimeDir, TOKEN_NAME),
     lockPath: path.join(runtimeDir, LOCK_NAME),
     worktreeRoot: `${stateDir}-worktrees`,
+    workerHomeRoot: `${stateDir}-worker-home`,
     repositoriesPath: path.join(stateDir, REPOSITORIES_NAME),
   };
 }

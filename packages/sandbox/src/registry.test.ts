@@ -18,6 +18,7 @@ import { SandboxRegistry } from "./registry.ts";
 
 const HOME = "/home/dev";
 const WORKTREE = "/srv/worktrees/AUTH-41";
+const WORKER_HOME = "/srv/worker-home/fake";
 
 const ENFORCING: SandboxCapabilities = {
   filesystemConfinement: true,
@@ -72,6 +73,7 @@ function baseRequest(overrides: Partial<SandboxRequest> = {}): SandboxRequest {
     network: "deny",
     networkAllowlist: [],
     home: HOME,
+    workerHome: WORKER_HOME,
     ...overrides,
   };
 }

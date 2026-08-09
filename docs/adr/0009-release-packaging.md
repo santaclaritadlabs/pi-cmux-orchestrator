@@ -25,9 +25,19 @@ concept, not a release boundary, and nothing about publishing `agentd`
 requires publishing them too.
 
 - **Bundling.** `apps/agentd/scripts/bundle.mjs` (esbuild) inlines every
-  `@pi-cmux/*` workspace dependency into `apps/agentd/bundle/cli.js`. That
-  file, not `dist/cli.js`, is the package's `bin` entry and its only
-  published content (`files: ["bundle"]`).
+  `@pi-cmux/*` workspace dependency into `apps/agentd/bundle/cli.js`, and
+  also writes `apps/agentd/bundle/package.json` — a minimal manifest with no
+  `dependencies` and no `exports`, not a copy of the dev one. `pnpm publish`
+  is pointed at that directory via `publishConfig.directory` in the dev
+  manifest, so the published tarball's own `package.json` is that minimal
+  one, never the dev manifest's. This is load-bearing, not cosmetic: the dev
+  manifest's `dependencies` lists every `@pi-cmux/*` workspace package (so
+  `tsc`/pnpm can link them locally), and every one of those is `private:
+true` — publishing that list verbatim would make `npm install
+@pi-cmux/agentd` try to fetch packages that were never pushed to the
+  registry and fail outright. The dev manifest's own `bin`/`exports` still
+  point at `dist/cli.js` unchanged, for local development only; they carry
+  no weight for what gets published once `publishConfig.directory` is set.
 - **Versioning.** Monolithic, and it lives in the git tag, not in a
   committed file. `apps/agentd/package.json`'s `version` field stays
   `0.0.0` in the repository; the release CI job overwrites it in its own

@@ -1,7 +1,20 @@
 /**
- * Build the artifact that actually gets published: `bundle/cli.js`, with
- * every `@pi-cmux/*` workspace dependency inlined, so `npm install -g
- * @pi-cmux/agentd` needs nothing from this monorepo's workspace linking.
+ * Build the artifact that actually gets published: `bundle/`, with every
+ * `@pi-cmux/*` workspace dependency inlined into `bundle/cli.js`, so
+ * `npm install -g @pi-cmux/agentd` needs nothing from this monorepo's
+ * workspace linking.
+ *
+ * `apps/agentd/package.json`'s `publishConfig.directory` points `pnpm
+ * publish` at this directory instead of the package root, which is why this
+ * script also writes `bundle/package.json` — a minimal, self-contained
+ * manifest, not a copy of the dev one. The dev manifest's `dependencies`
+ * lists every `@pi-cmux/*` workspace package so `tsc`/pnpm can link them
+ * locally; publishing that list verbatim would tell npm to fetch packages
+ * that are `private: true` and never reach the registry, so `npm install
+ * @pi-cmux/agentd` would fail outright. The bundle needs none of them at
+ * runtime — they are already inlined — so the published manifest declares
+ * no dependencies and no `exports` (this is a CLI, not a library; nothing
+ * outside this workspace imports `@pi-cmux/agentd` as a module).
  *
  * `@pi-cmux/testkit`'s replay worker is bundled a second time, on its own,
  * to `bundle/replay.js`. It has to land there as a real sibling file: the
@@ -18,7 +31,7 @@
  * not a `tsc` replacement).
  */
 
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,4 +70,25 @@ await bundle(
   path.join(outDir, "replay.js"),
 );
 
-console.log(`bundled: ${path.relative(repoRoot, outDir)}/{cli.js,replay.js}`);
+const devManifest = JSON.parse(
+  await readFile(path.join(agentdRoot, "package.json"), "utf8"),
+);
+// Everything the dev manifest needs for workspace linking and nothing this
+// artifact needs at runtime: no `dependencies` (inlined), no `exports`
+// (this is a CLI, not an importable library).
+const publishedManifest = {
+  name: devManifest.name,
+  version: devManifest.version,
+  type: devManifest.type,
+  description: devManifest.description,
+  bin: { agentd: "./cli.js" },
+  publishConfig: { access: "public" },
+};
+await writeFile(
+  path.join(outDir, "package.json"),
+  `${JSON.stringify(publishedManifest, null, 2)}\n`,
+);
+
+console.log(
+  `bundled: ${path.relative(repoRoot, outDir)}/{cli.js,replay.js,package.json}`,
+);

@@ -11,15 +11,18 @@
  * `SUCCEEDED`. CLAUDE.md: "Do not accept a worker claim of success as proof."
  */
 
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import {
   DEFAULT_EVENT_PAGE_SIZE,
   PROTOCOL_VERSION,
   err,
+  fromThrown,
   makeError,
   ok,
   parseAgentTask,
+  tryCatchAsync,
   type AgentEvent,
   type AgentResult,
   type AgentTask,
@@ -167,6 +170,12 @@ export type OrchestratorOptions = Readonly<{
   repositories: RepositoryRegistry;
   worktrees: WorktreeManager;
   sandbox: SandboxRegistry;
+  /**
+   * Root for every worker's isolated, persistent `HOME` — required, not
+   * optional, so a missing value cannot silently fall back to the real
+   * operator `HOME`. See `DaemonPaths.workerHomeRoot`.
+   */
+  workerHomeRoot: string;
   logger?: Logger;
   now?: () => Date;
   /** Flags for the fake worker; how a test selects a failure mode. */
@@ -188,6 +197,7 @@ export class Orchestrator {
   readonly #repositories: RepositoryRegistry;
   readonly #worktrees: WorktreeManager;
   readonly #sandbox: SandboxRegistry;
+  readonly #workerHomeRoot: string;
   readonly #logger: Logger;
   readonly #now: () => Date;
   readonly #workerArgs: readonly string[];
@@ -225,6 +235,7 @@ export class Orchestrator {
     this.#repositories = options.repositories;
     this.#worktrees = options.worktrees;
     this.#sandbox = options.sandbox;
+    this.#workerHomeRoot = options.workerHomeRoot;
     this.#logger = (options.logger ?? nullLogger).child({
       component: "orchestrator",
     });
@@ -549,6 +560,23 @@ export class Orchestrator {
     });
     if (!provisioned.ok) return provisioned;
 
+    // Lazy, per-kind: mirrors WorktreeManager's own root, created on first use
+    // rather than eagerly at boot for every kind agentd merely knows about.
+    const workerHome = path.join(this.#workerHomeRoot, task.worker.kind);
+    const workerHomePrepared = await tryCatchAsync(
+      async () => {
+        await mkdir(workerHome, { recursive: true, mode: 0o700 });
+        return undefined;
+      },
+      (cause) =>
+        fromThrown(
+          "STORE_IO_FAILED",
+          "could not create the worker's isolated home directory",
+          cause,
+        ),
+    );
+    if (!workerHomePrepared.ok) return workerHomePrepared;
+
     const placement = await this.#sandbox.prepare(task.constraints.sandbox, {
       runId,
       taskId: task.taskId,
@@ -556,6 +584,7 @@ export class Orchestrator {
       allowedPaths: task.constraints.allowedPaths,
       network: task.constraints.network,
       networkAllowlist: task.constraints.networkAllowlist,
+      workerHome,
     });
     if (!placement.ok) return placement;
 

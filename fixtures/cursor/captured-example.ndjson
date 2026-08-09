@@ -1,4 +1,4 @@
-{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/claude-501/-Users-ernanvr-Projects-pi-cmux-orchestrator/8b12889d-5e23-4559-99ca-1574007106d3/scratchpad/cursor-verify","session_id":"b72cbc2a-8ee9-461a-be24-e282c75a7029","model":"GLM 5.2 Max","permissionMode":"default"}
-{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the single word: pong"}]},"session_id":"b72cbc2a-8ee9-461a-be24-e282c75a7029"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"session_id":"b72cbc2a-8ee9-461a-be24-e282c75a7029"}
-{"type":"result","subtype":"success","duration_ms":3819,"duration_api_ms":3819,"is_error":false,"result":"pong","session_id":"b72cbc2a-8ee9-461a-be24-e282c75a7029","request_id":"93b5789b-c2f4-4818-9709-8d5f968f0083","usage":{"inputTokens":3012,"outputTokens":2,"cacheReadTokens":16352,"cacheWriteTokens":0}}
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/workspace/example-repo/scratchpad/cursor-verify","session_id":"00000000-0000-4000-8000-000000000301","model":"GLM 5.2 Max","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the single word: pong"}]},"session_id":"00000000-0000-4000-8000-000000000301"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"session_id":"00000000-0000-4000-8000-000000000301"}
+{"type":"result","subtype":"success","duration_ms":3819,"duration_api_ms":3819,"is_error":false,"result":"pong","session_id":"00000000-0000-4000-8000-000000000301","request_id":"00000000-0000-4000-8000-000000000302","usage":{"inputTokens":3012,"outputTokens":2,"cacheReadTokens":16352,"cacheWriteTokens":0}}

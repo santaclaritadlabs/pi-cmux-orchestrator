@@ -96,7 +96,9 @@ export class HostSandboxProvider implements SandboxProvider {
       argvPrefix: [],
       env: buildWorkerEnvironment({
         source: process.env,
-        ...(request.secrets === undefined ? {} : { extra: request.secrets }),
+        // HOME last, so it always wins over a same-named secret: the
+        // operator's real HOME must never reach a worker, even by accident.
+        extra: { ...(request.secrets ?? {}), HOME: request.workerHome },
       }),
     });
   }

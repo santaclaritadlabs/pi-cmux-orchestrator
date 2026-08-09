@@ -56,13 +56,49 @@ describe("the default is deny", () => {
 
   it("admits the Claude, Cursor, and Antigravity workers once P5 reviews them", async () => {
     await using dir = await temporaryDirectory();
+    // `worker.kind-requires-sandbox` demands `sandbox: "required"`, and
+    // `constraints.sandbox` in turn demands `profile.sandboxAvailable` — so
+    // admitting these kinds today needs a profile no phase actually ships
+    // yet, representing the day a real isolating provider is registered.
+    // See "allows what a later phase enables, without changing the rules"
+    // below for the same pattern.
+    const isolatedProfile: PolicyProfile = {
+      ...READ_ONLY_PROFILE,
+      sandboxAvailable: true,
+    };
     for (const kind of ["claude", "cursor", "antigravity"] as const) {
-      const task = await taskIn(dir.path, {
+      const base = await taskIn(dir.path, {
         worker: { kind, profile: "default" },
       });
+      const task: AgentTask = {
+        ...base,
+        constraints: { ...base.constraints, sandbox: "required" },
+      };
 
-      const decision = await decide(task);
+      const decision = await decide(task, isolatedProfile);
       assert.equal(decision.ok, true, `expected ${kind} to be admitted`);
+    }
+  });
+
+  it("denies Claude, Cursor, and Antigravity without a required sandbox", async () => {
+    // The confirmed gap this rule closes: nothing today isolates these
+    // workers from the host, so admitting them without demanding real
+    // isolation would run an unmodified provider CLI directly on the host.
+    await using dir = await temporaryDirectory();
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      for (const sandbox of ["preferred", "none"] as const) {
+        const task = await taskIn(dir.path, {
+          worker: { kind, profile: "default" },
+          constraints: { ...(await taskIn(dir.path)).constraints, sandbox },
+        });
+
+        const decision = await decide(task);
+        assert.equal(decision.ok, false, `expected ${kind}/${sandbox} denied`);
+        assert.equal(
+          decision.error.details?.["rule"],
+          "worker.kind-requires-sandbox",
+        );
+      }
     }
   });
 
@@ -91,6 +127,9 @@ describe("the default is deny", () => {
       worker: { kind: "claude", profile: "default" },
       constraints: {
         ...base.constraints,
+        // Required, so worker.kind-requires-sandbox does not mask the
+        // ordering this test actually exercises.
+        sandbox: "required",
         mayWrite: true,
         network: "allow",
         networkAllowlist: [],

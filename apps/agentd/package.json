@@ -4,13 +4,11 @@
   "type": "module",
   "description": "The execution supervisor daemon.",
   "publishConfig": {
-    "access": "public"
+    "directory": "bundle",
+    "linkDirectory": false
   },
-  "files": [
-    "bundle"
-  ],
   "bin": {
-    "agentd": "./bundle/cli.js"
+    "agentd": "./dist/cli.js"
   },
   "exports": {
     ".": {

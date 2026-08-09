@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
-import { temporaryDirectory } from "@pi-cmux/testkit";
+import { readFixture, temporaryDirectory } from "@pi-cmux/testkit";
 
 import { readEvents, start } from "./runner.ts";
 
@@ -116,5 +116,64 @@ describe("Antigravity runner", () => {
       "stream-json",
       "--dangerously-skip-permissions",
     ]);
+  });
+
+  it("reports a denied tool call as blocked, not succeeded, even though `agy` exits 0 and its own result envelope claims SUCCESS", async () => {
+    // Real captured transcript: exit code 0 and `result.status: "SUCCESS"`
+    // both survive a `run_command` denied by the user (step_update state
+    // "ERROR" on the tool step). This is the exact false-success case the
+    // terminal status must not trust the exit code or the provider's own
+    // result envelope for.
+    await using dir = await temporaryDirectory();
+    const raw = await readFixture(
+      "antigravity",
+      "captured-tool-error-example.ndjson",
+    );
+    const worker = path.join(dir.path, "agy-tool-error-fixture.mjs");
+    await writeFile(
+      worker,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(process.env.FIXTURE_CONTENT ?? '');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(worker, 0o755);
+
+    const stdoutPath = path.join(dir.path, "stdout.ndjson");
+    const task = taskWith({ objective: "run pwd" });
+
+    const handle = await start(
+      {
+        task,
+        runId: RUN_ID,
+        stdoutPath,
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: dir.path,
+        env: {
+          FIXTURE_CONTENT: raw,
+          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+        },
+      },
+      { command: worker },
+    );
+    assert.ok(handle.ok);
+    const outcome = await handle.value.completed;
+    assert.equal(outcome.reason, "exited");
+    assert.equal(outcome.exitCode, 0);
+
+    const batch = await readEvents(stdoutPath, 0, {
+      atEof: true,
+      taskId: task.taskId,
+      runId: RUN_ID,
+    });
+    assert.ok(batch.ok);
+    assert.equal(batch.value.results.length, 1);
+    assert.notEqual(batch.value.results[0]?.status, "succeeded");
+    assert.equal(batch.value.results[0]?.status, "blocked");
+    assert.equal(
+      batch.value.results[0].failure?.code,
+      "WORKER_PERMISSION_DENIED",
+    );
   });
 });

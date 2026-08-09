@@ -123,6 +123,39 @@ const RULES: readonly Rule[] = [
     },
   },
   {
+    name: "worker.kind-requires-sandbox",
+    evaluate: (task) => {
+      // These three run a real, unmodified provider CLI with real host
+      // access — including, for Antigravity with `mayWrite`, a flag that
+      // disables its own permission prompts. `HostSandboxProvider` (P2) is
+      // today the *only* registered `SandboxProvider`, and it declares no
+      // isolation capability at all, so a task that does not demand real
+      // isolation gets none: it runs the CLI directly against the host.
+      // CLAUDE.md: "agentd must run workers in a restricted sandbox/VM for
+      // untrusted repositories. If required isolation is unavailable,
+      // reject the task; do not silently fall back to the host." There is
+      // no repository-trust model yet to tell "untrusted" apart from
+      // "trusted", so until one exists every task for these kinds is
+      // treated as untrusted — which means `sandbox: "required"`.
+      //
+      // This rule is self-removing, not a permanent gate: the day a real
+      // isolating `SandboxProvider` is registered, `constraints.sandbox`
+      // below starts admitting `"required"` tasks for these kinds without
+      // this rule changing at all. `fake` and `codex` are deliberately not
+      // included — `fake` is a Node test harness with no host reach, and
+      // codex's exposure predates this review and is unchanged by it.
+      const gated: ReadonlySet<string> = new Set([
+        "claude",
+        "cursor",
+        "antigravity",
+      ]);
+      return gated.has(task.worker.kind) &&
+        task.constraints.sandbox !== "required"
+        ? `worker kind '${task.worker.kind}' requires sandbox: "required" until a real isolating provider exists`
+        : undefined;
+    },
+  },
+  {
     name: "constraints.no-push",
     evaluate: (task) => {
       // The type says this is `false` and the schema makes `true`

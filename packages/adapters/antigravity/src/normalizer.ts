@@ -95,6 +95,16 @@ export type AntigravityNormalizedBatch = Readonly<{
   offset: number;
   pendingBytes: number;
   overflowed: boolean;
+  /**
+   * True once any `step_update` for a `step_type: "tool"` step has carried a
+   * `tool_info.error` — cumulative since the normalizer was constructed,
+   * unlike `rejected`/`ignored`, which are per-call deltas. A caller deciding
+   * the terminal run status needs "did this ever happen across the whole
+   * run", not "did it happen in this chunk": `agy`'s exit code and its own
+   * `result` envelope can both claim success after a denied tool call, so
+   * this is the one signal a caller can trust instead.
+   */
+  sawToolError: boolean;
 }>;
 
 /** Stateful because NDJSON records and sequence allocation span read chunks. */
@@ -104,6 +114,7 @@ export class AntigravityEventNormalizer {
   readonly #now: () => Date;
   readonly #stream = new NdjsonStream();
   #nextSequence: number;
+  #sawToolError = false;
 
   public constructor(options: AntigravityNormalizerOptions) {
     this.#taskId = options.taskId;
@@ -141,6 +152,7 @@ export class AntigravityEventNormalizer {
       offset: read.consumedBytes,
       pendingBytes: read.pendingBytes,
       overflowed: read.overflowed,
+      sawToolError: this.#sawToolError,
     };
   }
 
@@ -151,8 +163,11 @@ export class AntigravityEventNormalizer {
     switch (envelope.data.event) {
       case "init":
       case "result":
-        // agentd owns lifecycle state; the runner constructs the terminal
-        // AgentResult from the process exit code, not from this envelope.
+        // agentd owns lifecycle state, so this envelope's own `result.status`
+        // is never trusted for the terminal AgentResult — including because
+        // it can itself claim success after a denied tool call (see
+        // `#sawToolError`). The runner still ignores it here; `step_update`
+        // is where a trustworthy signal actually lives.
         return { kind: "ignored" };
 
       case "step_update":
@@ -204,6 +219,8 @@ export class AntigravityEventNormalizer {
 
     const providerError = step.tool_info?.error;
     if (started || providerError === undefined) return toolEvent;
+
+    this.#sawToolError = true;
 
     const errorEvent = this.#event("log", {
       level: "error",
@@ -273,5 +290,6 @@ export function normalizeAntigravityStream(
     offset: finished.offset,
     pendingBytes: finished.pendingBytes,
     overflowed: pushed.overflowed || finished.overflowed,
+    sawToolError: finished.sawToolError,
   };
 }

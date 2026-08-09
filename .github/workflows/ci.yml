@@ -101,22 +101,26 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Elevated past the workflow default deliberately, and only here: this
-    # job publishes a public artifact, `verify` and `commitlint` do not.
-    # `contents: write` is unused today — GitHub Releases with a checksummed
-    # tarball are deferred, not implemented (see the ADR) — kept so adding
-    # that step later is a diff, not a permissions change.
-    permissions:
-      contents: write
+    # No elevation: this job holds NPM_TOKEN, so it gets the workflow default
+    # (`contents: read`) like every other job — nothing here needs `write`,
+    # and a compromised action in this job is the one scenario that would
+    # actually cash in a wider grant. When GitHub Releases with a checksummed
+    # tarball stop being deferred (docs/adr/0009-release-packaging.md), add
+    # `contents: write` back at that point, not before.
 
     steps:
-      - uses: actions/checkout@v4
+      # Every action in this job is pinned to a reviewed commit SHA, not a
+      # mutable tag — this is the one job with a real secret (NPM_TOKEN), so
+      # it does not get the same trust-the-tag convenience as `verify`/
+      # `commitlint`. The version comment is what a `dependabot` bump changes;
+      # re-verify the SHA against the tag before accepting one.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: pnpm

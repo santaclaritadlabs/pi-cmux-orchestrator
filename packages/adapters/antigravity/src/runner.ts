@@ -22,7 +22,7 @@
  * future `agy` version or a non-macOS host behaves differently, but this is
  * not currently treated as a blocking risk.
  */
-import { appendFile, open } from "node:fs/promises";
+import { appendFile, open, readFile } from "node:fs/promises";
 
 import {
   NdjsonStream,
@@ -44,7 +44,10 @@ import {
   type ProcessOutcome,
   type SupervisorOptions,
 } from "@pi-cmux/process-supervisor";
-import { AntigravityEventNormalizer } from "./normalizer.ts";
+import {
+  AntigravityEventNormalizer,
+  normalizeAntigravityStream,
+} from "./normalizer.ts";
 
 export type AgentCapabilities = Readonly<{
   kind: "antigravity";
@@ -145,22 +148,59 @@ export async function start(
   // Antigravity emits provider records, not AgentResult. Append one only
   // after the process has closed; agentd still validates it and overwrites
   // observations.
+  //
+  // Exit code alone is not proof of success: a denied tool call still lets
+  // `agy` exit 0, and even its own `result` envelope can claim
+  // `status: "SUCCESS"` afterward (see
+  // fixtures/antigravity/captured-tool-error-example.ndjson). The only
+  // signal that does not lie is the step-level `state: "ERROR"` on a `tool`
+  // step, which the normalizer already tracks — so an exit-0 run is
+  // re-checked against the full transcript before it is trusted, and a run
+  // that saw a denied tool call is reported `"blocked"` rather than
+  // `"succeeded"`.
   const completed = supervised.value.completed.then(async (outcome) => {
-    const succeeded = outcome.reason === "exited" && outcome.exitCode === 0;
+    const exitedZero = outcome.reason === "exited" && outcome.exitCode === 0;
+    const sawToolError = exitedZero
+      ? await detectToolError(args.stdoutPath, args.task.taskId, args.runId)
+      : false;
+    const status = exitedZero
+      ? sawToolError
+        ? "blocked"
+        : "succeeded"
+      : "failed";
     const result: AgentResult = {
       protocolVersion: PROTOCOL_VERSION,
       taskId: args.task.taskId,
       runId: args.runId,
-      status: succeeded ? "succeeded" : "failed",
-      summary: succeeded
-        ? "Antigravity completed"
-        : "Antigravity did not complete successfully",
+      status,
+      summary:
+        status === "succeeded"
+          ? "Antigravity completed"
+          : status === "blocked"
+            ? "Antigravity denied a tool call during the run"
+            : "Antigravity did not complete successfully",
       findings: [],
       tests: [],
       changedFiles: [],
       artifacts: [],
       changes: { worktreePath: args.task.workspace.worktreePath, dirty: false },
       warnings: [],
+      ...(status === "succeeded"
+        ? {}
+        : {
+            failure:
+              status === "blocked"
+                ? {
+                    code: "WORKER_PERMISSION_DENIED" as const,
+                    safeMessage: "a tool call was denied during the run",
+                    retryable: false,
+                  }
+                : {
+                    code: "WORKER_EXITED_NONZERO" as const,
+                    safeMessage: "Antigravity did not complete successfully",
+                    retryable: false,
+                  },
+          }),
     };
     const parsed = parseAgentResult(result);
     if (parsed.ok)
@@ -178,6 +218,29 @@ export async function start(
     taskId: args.task.taskId,
     completed,
   });
+}
+
+/**
+ * Re-normalizes the whole transcript once, at process completion, purely to
+ * answer "did any tool step ever report an error" — one full re-parse is
+ * cheap next to the process that just ran, and simpler than threading a
+ * long-lived normalizer instance through `readEvents`'s incremental,
+ * offset-based reads. A read failure (e.g. no output was ever produced)
+ * falls back to `false`: the exit-code-derived status stands on its own in
+ * that case, same as before this check existed.
+ */
+async function detectToolError(
+  stdoutPath: string,
+  taskId: string,
+  runId: string,
+): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await readFile(stdoutPath, "utf8");
+  } catch {
+    return false;
+  }
+  return normalizeAntigravityStream(raw, { taskId, runId }).sawToolError;
 }
 
 export type ReadEventsOptions = Readonly<{
