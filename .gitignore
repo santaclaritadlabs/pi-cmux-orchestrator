@@ -1,5 +1,6 @@
 node_modules/
 dist/
+apps/agentd/bundle/
 *.tsbuildinfo
 
 # Never commit captured provider output that has not been through the redactor.

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 # No credentials, no network access to provider CLIs, no write scope.
@@ -86,3 +87,55 @@ jobs:
             git log -1 --format=%s "$c" | pnpm exec commitlint || fail=1
           done
           exit $fail
+
+  # Publishes @pi-cmux/agentd to npm on a manually-pushed `vX.Y.Z` tag. Every
+  # internal @pi-cmux/* package stays private forever — this is the one
+  # public artifact, and its version comes from the tag, not from a
+  # committed version file: there is no per-package or changeset versioning
+  # here, by design (docs/adr/0009-release-packaging.md). `needs: verify`
+  # re-runs the whole repo gate against the tagged commit; a tag pushed
+  # before that commit's own CI went green is not trusted just because it is
+  # a tag.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Elevated past the workflow default deliberately, and only here: this
+    # job publishes a public artifact, `verify` and `commitlint` do not.
+    # `contents: write` is unused today — GitHub Releases with a checksummed
+    # tarball are deferred, not implemented (see the ADR) — kept so adding
+    # that step later is a diff, not a permissions change.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # The published version is the tag, not a file this repo tracks. Set
+      # only in the job's own checkout — nothing is committed back.
+      - name: Set the published version from the tag
+        run: npm pkg set version="${GITHUB_REF_NAME#v}" --prefix apps/agentd
+
+      - run: pnpm --filter @pi-cmux/agentd run bundle
+
+      # Smoke-test the exact artifact about to be published, not a proxy for
+      # it — same command a release runbook or a local check would run.
+      - run: pnpm --filter @pi-cmux/agentd run verify
+
+      - run: pnpm --filter @pi-cmux/agentd publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

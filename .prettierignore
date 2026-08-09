@@ -1,5 +1,6 @@
 node_modules/
 dist/
+apps/agentd/bundle/
 pnpm-lock.yaml
 *.tsbuildinfo
 

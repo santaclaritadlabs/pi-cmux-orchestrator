@@ -5,7 +5,9 @@
  *     agentd status                is it up, and how many runs are live
  *     agentd capabilities          what each reviewed worker kind supports
  *     agentd runs                  every run on disk, oldest first
+ *     agentd worktrees             claimed worktrees nobody has released
  *     agentd logs --follow <runId> tail a run's normalized events
+ *     agentd verify                smoke-test this artifact end to end
  *
  * `logs --follow` is exactly what a cmux pane will run in P4. That is the whole
  * reason worker processes do not live inside a pane: closing a workspace by
@@ -15,9 +17,14 @@
  * would corrupt whatever is parsing the former.
  */
 
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { RunStore } from "@pi-cmux/core";
 import { createLogger } from "@pi-cmux/observability";
-import { isTerminalRunState } from "@pi-cmux/protocol";
+import { isTerminalRunState, sampleTask } from "@pi-cmux/protocol";
 
 import { connectToDaemon } from "./client.ts";
 import { acquireDaemonLock } from "./daemon-lock.ts";
@@ -28,6 +35,7 @@ import { loadRepositories } from "./config.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { prepareDaemonDirectories, resolveDaemonPaths } from "./paths.ts";
 import { recoverRuns } from "./recovery.ts";
+import { RepositoryRegistry } from "./repositories.ts";
 import { startServer } from "./server.ts";
 
 function out(text: string): void {
@@ -43,7 +51,9 @@ function usage(): void {
       "  status                   report daemon health",
       "  capabilities             list each reviewed worker kind's capabilities",
       "  runs                     list runs, oldest first",
+      "  worktrees                list worktrees claimed but never released",
       "  logs --follow <runId>    stream a run's events",
+      "  verify                   smoke-test this artifact end to end",
       "",
     ].join("\n"),
   );
@@ -240,6 +250,150 @@ async function commandRuns(): Promise<number> {
   return 0;
 }
 
+async function commandWorktrees(): Promise<number> {
+  // Reads records directly, like `runs`: an operator chasing a worktree left
+  // behind by a daemon that orphaned its run — see docs/runbooks/recovery.md —
+  // needs this even when that daemon is long gone.
+  const paths = resolveDaemonPaths();
+  const worktrees = new WorktreeManager({ root: paths.worktreeRoot });
+
+  const unreleased = await worktrees.listUnreleased();
+  if (!unreleased.ok) {
+    process.stderr.write(`${unreleased.error.safeMessage}\n`);
+    return 1;
+  }
+
+  for (const record of unreleased.value) {
+    out(`${record.runId}  ${record.worktreePath}  claimed ${record.claimedAt}`);
+  }
+  return 0;
+}
+
+/**
+ * Prove this artifact actually runs, not just that it typechecked.
+ *
+ * Bundling for release can break what the test suite cannot see: a module
+ * that locates a sibling file relative to itself, for instance, resolves
+ * differently once its code is bundled into a different file. So this drives
+ * the daemon's real components — including the `fake` worker, whose child
+ * process is exactly the kind of relative lookup a bundle can break — through
+ * one full run, in-process, with no RPC socket and nothing left behind on
+ * disk. It is a smoke test of the artifact, not a rerun of `pnpm verify`:
+ * that already covers format, lint, types and every unit and integration
+ * test, and none of that is repeated here.
+ */
+async function commandVerify(): Promise<number> {
+  const logger = createLogger({ level: "warn" }).child({
+    component: "agentd-verify",
+  });
+
+  const scratch = await mkdtemp(path.join(tmpdir(), "agentd-verify-"));
+  try {
+    const repoPath = path.join(scratch, "repo");
+    initScratchRepo(repoPath);
+
+    const store = new RunStore({ root: path.join(scratch, "state") });
+    const worktrees = new WorktreeManager({
+      root: path.join(scratch, "worktrees"),
+      logger,
+    });
+    const repositories = new RepositoryRegistry([
+      { repoId: "verify", path: repoPath },
+    ]);
+    const sandbox = new SandboxRegistry([new HostSandboxProvider()], {
+      logger,
+    });
+    const orchestrator = new Orchestrator({
+      store,
+      repositories,
+      worktrees,
+      sandbox,
+      logger,
+    });
+
+    const task = sampleTask({
+      taskId: "task_01JQZXVERIFY00000000000A",
+      worker: { kind: "fake", profile: "default" },
+      workspace: {
+        repoId: "verify",
+        worktreePath: path.join(scratch, "worktrees", "verify-1"),
+        baseRef: "main",
+      },
+      constraints: {
+        allowedPaths: [path.join(scratch, "worktrees", "verify-1")],
+        forbiddenPaths: [],
+        network: "deny",
+        networkAllowlist: [],
+        sandbox: "preferred",
+        mayWrite: true,
+        mayCommit: false,
+        mayPush: false,
+        capabilities: [],
+      },
+    });
+
+    const created = await orchestrator.createTask(task);
+    if (!created.ok) {
+      process.stderr.write(
+        `verify: could not create the task: ${created.error.safeMessage}\n`,
+      );
+      return 1;
+    }
+    const started = await orchestrator.startRun(created.value.runId);
+    if (!started.ok) {
+      process.stderr.write(
+        `verify: could not start the task: ${started.error.safeMessage}\n`,
+      );
+      return 1;
+    }
+
+    const deadline = Date.now() + 30_000;
+    let final = started.value;
+    while (!isTerminalRunState(final.state) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const polled = await orchestrator.status(created.value.runId);
+      if (!polled.ok) {
+        process.stderr.write(
+          `verify: could not poll the task: ${polled.error.safeMessage}\n`,
+        );
+        return 1;
+      }
+      final = polled.value;
+    }
+
+    await orchestrator.shutdown();
+
+    if (final.state !== "SUCCEEDED") {
+      process.stderr.write(
+        `verify: FAILED — the fake worker did not succeed (state: ${final.state})\n`,
+      );
+      return 1;
+    }
+
+    out(
+      "verify: OK — daemon booted, admitted a task, ran the fake worker to completion",
+    );
+    return 0;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/** A one-commit repository, just enough for `baseRef: "main"` to resolve. */
+function initScratchRepo(repoPath: string): void {
+  execFileSync("git", ["init", "--quiet", "--initial-branch=main", repoPath]);
+  execFileSync("git", ["commit", "--quiet", "--allow-empty", "-m", "verify"], {
+    cwd: repoPath,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "agentd-verify",
+      GIT_AUTHOR_EMAIL: "agentd-verify@localhost",
+      GIT_COMMITTER_NAME: "agentd-verify",
+      GIT_COMMITTER_EMAIL: "agentd-verify@localhost",
+    },
+  });
+}
+
 async function commandLogs(argv: readonly string[]): Promise<number> {
   const follow = argv.includes("--follow");
   const runId = argv.find((arg) => arg.startsWith("run_"));
@@ -286,8 +440,12 @@ async function main(argv: readonly string[]): Promise<number> {
       return await commandCapabilities();
     case "runs":
       return await commandRuns();
+    case "worktrees":
+      return await commandWorktrees();
     case "logs":
       return await commandLogs(argv.slice(1));
+    case "verify":
+      return await commandVerify();
     case undefined:
     case "--help":
     case "help":
