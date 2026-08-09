@@ -46,6 +46,21 @@ import {
   start as startCodexWorker,
   type RunHandle as CodexRunHandle,
 } from "@pi-cmux/adapter-codex";
+import {
+  readEvents as readClaudeEvents,
+  start as startClaudeWorker,
+  type RunHandle as ClaudeRunHandle,
+} from "@pi-cmux/adapter-claude";
+import {
+  readEvents as readCursorEvents,
+  start as startCursorWorker,
+  type RunHandle as CursorRunHandle,
+} from "@pi-cmux/adapter-cursor";
+import {
+  readEvents as readAntigravityEvents,
+  start as startAntigravityWorker,
+  type RunHandle as AntigravityRunHandle,
+} from "@pi-cmux/adapter-antigravity";
 import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
 import type { SandboxPlacement, SandboxRegistry } from "@pi-cmux/sandbox";
 import type { WorktreeManager } from "@pi-cmux/worktrees";
@@ -53,7 +68,12 @@ import type { WorktreeManager } from "@pi-cmux/worktrees";
 import { processOwner } from "./daemon-lock.ts";
 import type { RepositoryRegistry } from "./repositories.ts";
 
-type RunHandle = FakeRunHandle | CodexRunHandle;
+type RunHandle =
+  | FakeRunHandle
+  | CodexRunHandle
+  | ClaudeRunHandle
+  | CursorRunHandle
+  | AntigravityRunHandle;
 
 type WorkerStartArgs = Parameters<typeof startWorker>[0];
 type WorkerStartOptions = Readonly<{
@@ -74,14 +94,19 @@ async function readSelectedWorkerEvents(
   stdoutPath: string,
   offset: number,
 ): Promise<Result<WorkerBatch, AgentdError>> {
-  if (task.worker.kind === "codex") {
-    return await readCodexEvents(stdoutPath, offset, {
-      atEof: true,
-      taskId: task.taskId,
-      runId,
-    });
+  const options = { atEof: true, taskId: task.taskId, runId };
+  switch (task.worker.kind) {
+    case "codex":
+      return await readCodexEvents(stdoutPath, offset, options);
+    case "claude":
+      return await readClaudeEvents(stdoutPath, offset, options);
+    case "cursor":
+      return await readCursorEvents(stdoutPath, offset, options);
+    case "antigravity":
+      return await readAntigravityEvents(stdoutPath, offset, options);
+    case "fake":
+      return await readWorkerEvents(stdoutPath, offset, { atEof: true });
   }
-  return await readWorkerEvents(stdoutPath, offset, { atEof: true });
 }
 
 async function startSelectedWorker(
@@ -89,13 +114,20 @@ async function startSelectedWorker(
   args: WorkerStartArgs,
   options: WorkerStartOptions,
 ): Promise<Result<RunHandle, AgentdError>> {
-  if (task.worker.kind === "codex") {
-    return await startCodexWorker(
-      args,
-      options.logger === undefined ? {} : { logger: options.logger },
-    );
+  const adapterOptions =
+    options.logger === undefined ? {} : { logger: options.logger };
+  switch (task.worker.kind) {
+    case "codex":
+      return await startCodexWorker(args, adapterOptions);
+    case "claude":
+      return await startClaudeWorker(args, adapterOptions);
+    case "cursor":
+      return await startCursorWorker(args, adapterOptions);
+    case "antigravity":
+      return await startAntigravityWorker(args, adapterOptions);
+    case "fake":
+      return await startWorker(args, options);
   }
-  return await startWorker(args, options);
 }
 
 export type OrchestratorOptions = Readonly<{

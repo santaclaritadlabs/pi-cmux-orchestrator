@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../observability" },
+    { "path": "../../protocol" },
+    { "path": "../../process-supervisor" },
+    { "path": "../../testkit" }
+  ]
+}

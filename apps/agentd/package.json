@@ -17,7 +17,10 @@
     "test": "node --test --test-reporter=spec --test-timeout=90000 --enable-source-maps \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@pi-cmux/adapter-antigravity": "workspace:*",
+    "@pi-cmux/adapter-claude": "workspace:*",
     "@pi-cmux/adapter-codex": "workspace:*",
+    "@pi-cmux/adapter-cursor": "workspace:*",
     "@pi-cmux/adapter-fake": "workspace:*",
     "@pi-cmux/core": "workspace:*",
     "@pi-cmux/observability": "workspace:*",
