@@ -231,7 +231,11 @@ describe("authentication", () => {
     const response = await new Promise<string>((resolve) => {
       const socket = connect(harness.server.socketPath, () => {
         socket.write(
-          `${JSON.stringify({ id: "1", method: "daemon.health" })}\n`,
+          `${JSON.stringify({
+            protocolVersion: "1",
+            id: "1",
+            method: "daemon.health",
+          })}\n`,
         );
       });
       socket.setEncoding("utf8");

@@ -3,15 +3,17 @@ import { z } from "zod";
 
 import { connectToDaemon, type DaemonClient } from "@pi-cmux/agentd";
 import {
+  DEFAULT_EVENT_PAGE_SIZE,
   err,
+  fromThrown,
   makeError,
   ok,
   parseAgentEvent,
   parseAgentResult,
   parseAgentTask,
+  runIdSchema,
   type AgentEvent,
   type AgentResult,
-  type AgentTask,
   type AgentdError,
   type Result,
 } from "@pi-cmux/protocol";
@@ -120,16 +122,24 @@ function isTerminal(state: RunRecord["state"]): boolean {
 function sleep(intervalMs: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, intervalMs);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    let settled = false;
+    const onAbort = (): void => {
+      finish();
+    };
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const timer = setTimeout(finish, intervalMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function validRunId(runId: string): boolean {
+  return runIdSchema.safeParse(runId).success;
 }
 
 export class PiAgentdBridge {
@@ -157,16 +167,16 @@ export class PiAgentdBridge {
     this.daemon.close();
   }
 
-  async createTask(task: AgentTask): Promise<Result<RunRecord, AgentdError>> {
+  async createTask(task: unknown): Promise<Result<RunRecord, AgentdError>> {
     const valid = parseAgentTask(task);
     if (!valid.ok) return valid;
-    const response = await this.daemon.call("task.create", { task });
+    const response = await this.daemon.call("task.create", {
+      task: valid.value,
+    });
     return response.ok ? parseRunRecord(response.value) : response;
   }
 
-  async createAndStart(
-    task: AgentTask,
-  ): Promise<Result<RunRecord, AgentdError>> {
+  async createAndStart(task: unknown): Promise<Result<RunRecord, AgentdError>> {
     const created = await this.createTask(task);
     if (!created.ok) return created;
     return await this.start(created.value.runId);
@@ -200,17 +210,27 @@ export class PiAgentdBridge {
   async events(
     runId: string,
     sinceSequence = -1,
+    limit = DEFAULT_EVENT_PAGE_SIZE,
   ): Promise<Result<readonly AgentEvent[], AgentdError>> {
+    if (!validRunId(runId)) return invalidResponse("agentd run id");
     const response = await this.daemon.call("task.events", {
       runId,
       sinceSequence,
+      limit,
     });
     if (!response.ok) return response;
     if (!Array.isArray(response.value)) return invalidResponse("agentd events");
     const events: AgentEvent[] = [];
+    let previous = sinceSequence;
     for (const value of response.value) {
       const parsed = parseAgentEvent(value);
-      if (!parsed.ok) return invalidResponse("agentd event");
+      if (
+        !parsed.ok ||
+        parsed.value.runId !== runId ||
+        parsed.value.sequence <= previous
+      )
+        return invalidResponse("agentd event");
+      previous = parsed.value.sequence;
       events.push(parsed.value);
     }
     return ok(events);
@@ -227,6 +247,8 @@ export class PiAgentdBridge {
     ]);
     if (!run.ok) return run;
     if (!events.ok) return events;
+    if (events.value.some((event) => event.taskId !== run.value.taskId))
+      return invalidResponse("agentd event");
     return ok({
       run: run.value,
       ...(events.value.length > 0
@@ -255,7 +277,11 @@ export class PiAgentdBridge {
     while (options.signal?.aborted !== true) {
       const snapshot = await this.snapshot(runId, sinceSequence);
       if (!snapshot.ok) return snapshot;
-      await options.onSnapshot(snapshot.value);
+      try {
+        await options.onSnapshot(snapshot.value);
+      } catch (cause) {
+        return err(fromThrown("INTERNAL", "the status consumer failed", cause));
+      }
       const latest = snapshot.value.latestEvent?.sequence;
       if (latest !== undefined) sinceSequence = latest;
       if (isTerminal(snapshot.value.run.state)) return ok(undefined);

@@ -14,6 +14,7 @@
 import path from "node:path";
 
 import {
+  DEFAULT_EVENT_PAGE_SIZE,
   PROTOCOL_VERSION,
   err,
   makeError,
@@ -975,8 +976,9 @@ export class Orchestrator {
   public async events(
     runId: string,
     sinceSequence = -1,
+    limit = DEFAULT_EVENT_PAGE_SIZE,
   ): Promise<Result<AgentEvent[], AgentdError>> {
-    return await this.#store.readEvents(runId, sinceSequence);
+    return await this.#store.readEvents(runId, sinceSequence, limit);
   }
 
   /**

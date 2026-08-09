@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
-
-import { temporaryDirectory } from "@pi-cmux/testkit";
 
 import { connectToDaemon } from "./client.ts";
 import { resolveDaemonPaths, prepareDaemonDirectories } from "./paths.ts";
@@ -45,7 +43,14 @@ async function startIntegrationServer(
 ): Promise<
   { server: DaemonServer; root: { path: string } & AsyncDisposable } | undefined
 > {
-  const dir = await temporaryDirectory();
+  // Keep the socket under macOS's sun_path ceiling even when TMPDIR is long.
+  const directory = await mkdtemp("/tmp/pi-");
+  const dir: { path: string } & AsyncDisposable = {
+    path: directory,
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
   const runtimeDir = path.join(dir.path, "r");
   const stateDir = path.join(dir.path, "s");
   await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
@@ -114,7 +119,11 @@ describe("real RPC Unix-socket integration", { skip: !ENABLED }, () => {
       const response = await new Promise<string>((resolve, reject) => {
         const socket = net.connect(server.socketPath, () => {
           socket.write(
-            `${JSON.stringify({ id: "unauth", method: "daemon.health" })}\n`,
+            `${JSON.stringify({
+              protocolVersion: "1",
+              id: "unauth",
+              method: "daemon.health",
+            })}\n`,
           );
         });
         socket.setEncoding("utf8");

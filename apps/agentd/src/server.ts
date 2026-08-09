@@ -333,6 +333,7 @@ function handleConnection(
         const events = await orchestrator.events(
           parsed.data.runId,
           parsed.data.sinceSequence ?? -1,
+          parsed.data.limit,
         );
         return events.ok ? rpcOk(id, events.value) : rpcErr(id, events.error);
       }

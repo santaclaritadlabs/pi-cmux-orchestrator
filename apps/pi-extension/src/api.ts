@@ -3,7 +3,7 @@ import { PiAgentdBridge, type PiConnectionOptions } from "./index.ts";
 import {
   makeError,
   ok,
-  type AgentTask,
+  runIdSchema,
   type AgentdError,
   type Result,
 } from "@pi-cmux/protocol";
@@ -41,6 +41,8 @@ export const PI_COMMANDS = [
 ] as const;
 export type PiCommandName = (typeof PI_COMMANDS)[number];
 
+const MAX_COMMAND_JSON_BYTES = 1024 * 1024;
+
 function commandError(safeMessage: string): PiCommandResponse {
   return { ok: false, error: makeError("SCHEMA_INVALID", safeMessage) };
 }
@@ -51,12 +53,18 @@ function oneArgument(input: PiCommandInput): string | undefined {
 
 function runIdArgument(input: PiCommandInput): string | undefined {
   const value = oneArgument(input);
-  return value === undefined || value.trim() === "" ? undefined : value;
+  return value !== undefined && runIdSchema.safeParse(value).success
+    ? value
+    : undefined;
 }
 
 function jsonArgument(input: PiCommandInput): unknown {
   const raw = oneArgument(input);
-  if (raw === undefined) return undefined;
+  if (
+    raw === undefined ||
+    Buffer.byteLength(raw, "utf8") > MAX_COMMAND_JSON_BYTES
+  )
+    return undefined;
   try {
     return JSON.parse(raw) as unknown;
   } catch {
@@ -84,13 +92,13 @@ export function registerPiExtension(
       const value = jsonArgument(input);
       return value === undefined
         ? commandError("agentd.create expects one JSON task argument")
-        : response(await bridge.createTask(value as AgentTask));
+        : response(await bridge.createTask(value));
     },
     "agentd.createAndStart": async (input) => {
       const value = jsonArgument(input);
       return value === undefined
         ? commandError("agentd.createAndStart expects one JSON task argument")
-        : response(await bridge.createAndStart(value as AgentTask));
+        : response(await bridge.createAndStart(value));
     },
     "agentd.start": async (input) => {
       const runId = runIdArgument(input);

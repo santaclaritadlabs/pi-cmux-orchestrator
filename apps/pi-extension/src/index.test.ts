@@ -95,6 +95,40 @@ describe("PiAgentdBridge", () => {
     assert.equal(response.error.code, "RPC_MALFORMED");
   });
 
+  it("rejects event pages that do not match the requested run or sequence", async () => {
+    const event: AgentEvent = {
+      protocolVersion: "1",
+      taskId: run.taskId,
+      runId: "run_01JQZX3K5T7V9B2N4M6P8R0AWD",
+      sequence: 0,
+      timestamp: "2026-08-08T00:00:01.000Z",
+      type: "heartbeat",
+      payload: { uptimeMs: 1 },
+    };
+    const bridge = PiAgentdBridge.fromClient(
+      fakeClient({ "task.events": [event] }),
+    );
+    const response = await bridge.events(run.runId);
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, "RPC_MALFORMED");
+  });
+
+  it("returns a Result when a status consumer throws", async () => {
+    const bridge = PiAgentdBridge.fromClient(
+      fakeClient({
+        "task.status": { ...run, state: "SUCCEEDED" },
+        "task.events": [],
+      }),
+    );
+    const response = await bridge.watch(run.runId, {
+      onSnapshot: () => {
+        throw new Error("pane closed");
+      },
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, "INTERNAL");
+  });
+
   it("offers a cancellable status watch for Pi/cmux consumers", async () => {
     const event: AgentEvent = {
       protocolVersion: "1",

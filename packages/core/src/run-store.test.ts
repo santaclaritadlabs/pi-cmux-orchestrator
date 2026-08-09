@@ -314,6 +314,22 @@ describe("event ingestion", () => {
     );
   });
 
+  it("returns a bounded page after sorting events", async () => {
+    await using dir = await temporaryDirectory();
+    const { store, runId } = await seeded(dir.path);
+    await store.appendEvents(runId, [
+      sampleEvent({ sequence: 4 }),
+      sampleEvent({ sequence: 1 }),
+      sampleEvent({ sequence: 2 }),
+    ]);
+
+    const page = expectOk(await store.readEvents(runId, -1, 2));
+    assert.deepEqual(
+      page.map((event) => event.sequence),
+      [1, 2],
+    );
+  });
+
   it("filters by sinceSequence for streaming reconnects", async () => {
     await using dir = await temporaryDirectory();
     const { store, runId } = await seeded(dir.path);
