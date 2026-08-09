@@ -140,7 +140,7 @@ Protocol rules:
 - No repository may silently load an MCP server, Pi extension, Claude/Codex skill, hook, plugin, shell profile, or executable configuration into the control plane.
 - Ship **zero mandatory community extensions**. First-party integrations must be pinned, reviewed, versioned, and independently updatable.
 - Pin external dependencies with a lockfile; review additions; use integrity metadata; avoid install-time scripts where possible. Never auto-update dependencies or CLI binaries.
-- `agentd` must run workers in a restricted sandbox/VM for untrusted repositories. If required isolation is unavailable, reject the task; do not silently fall back to the host.
+- `agentd` must run workers in a restricted sandbox/VM for untrusted repositories. If required isolation is unavailable, reject the task; do not silently fall back to the host. `docs/adr/0011-mvp-defers-real-sandbox-isolation.md` records the one explicit, time-bounded exception: `sandbox: "preferred"` (audited as `degraded`, never silent) is admitted for the `claude`, `cursor`, and `antigravity` worker kinds until a real isolating provider lands. `sandbox: "required"` still fails closed for every worker kind, no exception.
 - Network is denied by default. Enable it only per task through policy and pass only the minimal allowlist to the sandbox.
 - Do not mount user home directories, SSH credentials, cloud credentials, agent configuration, or host sockets into an untrusted worker.
 - Do not expose `agentd` beyond its local authenticated Unix socket. Authenticate peer identity/permissions and use filesystem permissions appropriate for the current user.

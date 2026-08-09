@@ -80,25 +80,45 @@ describe("the default is deny", () => {
     }
   });
 
-  it("denies Claude, Cursor, and Antigravity without a required sandbox", async () => {
-    // The confirmed gap this rule closes: nothing today isolates these
-    // workers from the host, so admitting them without demanding real
-    // isolation would run an unmodified provider CLI directly on the host.
+  it("denies Claude, Cursor, and Antigravity with sandbox: none", async () => {
+    // `"none"` would suppress the degraded-mode audit record ADR 0011 relies
+    // on, so it stays refused even though `"preferred"` is now admitted.
     await using dir = await temporaryDirectory();
     for (const kind of ["claude", "cursor", "antigravity"] as const) {
-      for (const sandbox of ["preferred", "none"] as const) {
-        const task = await taskIn(dir.path, {
-          worker: { kind, profile: "default" },
-          constraints: { ...(await taskIn(dir.path)).constraints, sandbox },
-        });
+      const task = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+        constraints: {
+          ...(await taskIn(dir.path)).constraints,
+          sandbox: "none",
+        },
+      });
 
-        const decision = await decide(task);
-        assert.equal(decision.ok, false, `expected ${kind}/${sandbox} denied`);
-        assert.equal(
-          decision.error.details?.["rule"],
-          "worker.kind-requires-sandbox",
-        );
-      }
+      const decision = await decide(task);
+      assert.equal(decision.ok, false, `expected ${kind}/none denied`);
+      assert.equal(
+        decision.error.details?.["rule"],
+        "worker.kind-requires-sandbox",
+      );
+    }
+  });
+
+  it("admits Claude, Cursor, and Antigravity with sandbox: preferred (ADR 0011)", async () => {
+    // The accepted MVP exception: no real isolating provider exists yet, so
+    // `sandboxAvailable` stays false, but `SandboxRegistry` reports and logs
+    // this as `degraded` rather than the task being silently refused or
+    // silently run unmarked.
+    await using dir = await temporaryDirectory();
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      const task = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+        constraints: {
+          ...(await taskIn(dir.path)).constraints,
+          sandbox: "preferred",
+        },
+      });
+
+      const decision = await decide(task);
+      assert.equal(decision.ok, true, `expected ${kind}/preferred admitted`);
     }
   });
 

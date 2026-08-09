@@ -249,11 +249,25 @@ refuses a write surface reaching the denylist, and still re-checks that every
 `allowedPath` is inside the worktree — admission may have been minutes and one
 symlink ago.
 
-Until a real provider lands (P5), **untrusted repositories are not adequately
-isolated by this daemon**. The controls that do hold are the worktree, path
+**Untrusted repositories are not adequately isolated by this daemon** until a
+real provider lands. The controls that do hold are the worktree, path
 containment, the built environment, the repository config audit, and the
 denylist. None of them contains a worker that has already achieved code
 execution on the host.
+
+This is now an accepted, time-bounded MVP exception rather than an implicit
+gap: **ADR 0011** records the decision to defer the real provider and, in the
+meantime, admit `sandbox: "preferred"` (not just `"required"`) for the
+`claude`, `cursor`, and `antigravity` worker kinds in
+`worker.kind-requires-sandbox` (`packages/policy/src/decide.ts`). Every task
+against those three kinds therefore runs on the host, for every repository —
+there is still no repository-trust model to scope the exception more
+narrowly. It is not a silent fallback: `SandboxRegistry` reports and logs the
+placement as `degraded` (below), so the fact is on the audit trail even
+though the run is unisolated. `sandbox: "required"` still fails closed
+regardless of worker kind. Revisit this the moment a real `SandboxProvider`
+is registered — at that point `"preferred"` starts actually enforcing rather
+than degrading, which ADR 0011 flags as worth its own review.
 
 ### Worktrees are not garbage-collected
 
