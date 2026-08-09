@@ -6,9 +6,24 @@ import { describe, it } from "node:test";
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
 import { temporaryDirectory } from "@pi-cmux/testkit";
 
-import { normalizeStream, readEvents, start } from "./runner.ts";
+import {
+  normalizeStream,
+  readEvents,
+  start,
+  type StartArgs,
+} from "./runner.ts";
 
 const RUN_ID = "run_01JQZX3K5T7V9B2N4M6P8R0AWC";
+
+// @ts-expect-error StartArgs requires a sandbox-supplied environment.
+const startArgsWithoutEnv: StartArgs = {
+  task: sampleTask(),
+  runId: RUN_ID,
+  stdoutPath: "/tmp/stdout.ndjson",
+  stderrPath: "/tmp/stderr.log",
+  cwd: "/tmp",
+};
+void startArgsWithoutEnv;
 
 function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -61,7 +76,7 @@ describe("Cursor runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: path.dirname(process.execPath),
         },
       },
       { command: worker },
@@ -104,7 +119,7 @@ describe("Cursor runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: path.dirname(process.execPath),
         },
       },
       { command: worker },
@@ -131,7 +146,7 @@ describe("Cursor runner", () => {
         stdoutPath: path.join(dir.path, "stdout.ndjson"),
         stderrPath: path.join(dir.path, "stderr.log"),
         cwd: dir.path,
-        env: { HANG: "1", PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+        env: { HANG: "1", PATH: path.dirname(process.execPath) },
       },
       { command: worker, supervisor: { terminationGraceMs: 200 } },
     );

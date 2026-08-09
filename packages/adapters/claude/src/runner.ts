@@ -6,9 +6,9 @@
  * memory and `CLAUDE.md` from the host and the target repository, which is
  * exactly the "silently load an MCP server / hook / plugin" path CLAUDE.md
  * forbids for untrusted repository content. `--bare` also means the CLI
- * cannot fall back to an interactive OAuth/keychain login, so auth must be
- * supplied as `ANTHROPIC_API_KEY` through the allowlisted environment —
- * consistent with "no host credentials into an untrusted worker".
+ * cannot fall back to an interactive OAuth/keychain login, so credentials must
+ * be supplied through the sandbox-provided environment — consistent with "no
+ * host credentials into an untrusted worker".
  */
 import { appendFile, open } from "node:fs/promises";
 
@@ -24,7 +24,6 @@ import {
 } from "@pi-cmux/protocol";
 import { nullLogger, type Logger } from "@pi-cmux/observability";
 import {
-  buildWorkerEnvironment,
   superviseProcess,
   type ProcessOutcome,
   type SupervisorOptions,
@@ -92,7 +91,7 @@ export type StartArgs = Readonly<{
   stdoutPath: string;
   stderrPath: string;
   cwd: string;
-  env?: Readonly<Record<string, string>>;
+  env: Readonly<Record<string, string>>;
   argvPrefix?: readonly string[];
 }>;
 
@@ -122,18 +121,7 @@ export async function start(
     command: command ?? "claude",
     args: argv,
     cwd: args.cwd,
-    env:
-      args.env === undefined
-        ? buildWorkerEnvironment({
-            source: process.env,
-            // CLAUDE_CODE_OAUTH_TOKEN is documented as a valid long-lived
-            // auth token for the Claude Code CLI generally; it is allowlisted
-            // defensively but ANTHROPIC_API_KEY is the confirmed path in
-            // `--bare` mode specifically (bare mode never reads the OAuth
-            // keychain).
-            allow: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
-          })
-        : { ...args.env },
+    env: { ...args.env },
     stdoutPath: args.stdoutPath,
     stderrPath: args.stderrPath,
     softTimeoutMs: args.task.limits.softTimeoutMs,

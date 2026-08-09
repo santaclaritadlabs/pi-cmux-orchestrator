@@ -30,7 +30,6 @@ import {
 } from "@pi-cmux/protocol";
 import { nullLogger, type Logger } from "@pi-cmux/observability";
 import {
-  buildWorkerEnvironment,
   superviseProcess,
   type ProcessOutcome,
   type SupervisorOptions,
@@ -97,11 +96,8 @@ export type StartArgs = Readonly<{
   stdoutPath: string;
   stderrPath: string;
   cwd: string;
-  /**
-   * Environment supplied by the sandbox placement. When absent the adapter
-   * builds its own allowlisted environment, which carries no credentials.
-   */
-  env?: Readonly<Record<string, string>>;
+  /** Environment supplied by the sandbox placement. */
+  env: Readonly<Record<string, string>>;
   /**
    * Command prefix from the sandbox placement — the wrapper that actually
    * enforces isolation. It is prepended to the worker's argv as part of the
@@ -110,13 +106,7 @@ export type StartArgs = Readonly<{
   argvPrefix?: readonly string[];
 }>;
 
-/**
- * Launch the fake worker under supervision.
- *
- * The environment is built by allowlist and carries no credentials: the fake
- * provider needs none, and a worker that does not need a secret must not be
- * handed one (spec §18).
- */
+/** Launch the fake worker under supervision. */
 export async function start(
   args: StartArgs,
   options: FakeRunnerOptions = {},
@@ -148,13 +138,7 @@ export async function start(
     command: command ?? process.execPath,
     args: argv,
     cwd: args.cwd,
-    env:
-      args.env === undefined
-        ? buildWorkerEnvironment({
-            source: process.env,
-            // PATH and HOME only; no provider credentials of any kind.
-          })
-        : { ...args.env },
+    env: { ...args.env },
     stdoutPath: args.stdoutPath,
     stderrPath: args.stderrPath,
     softTimeoutMs: args.task.limits.softTimeoutMs,

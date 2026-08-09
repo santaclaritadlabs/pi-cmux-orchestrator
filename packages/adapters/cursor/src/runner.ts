@@ -8,8 +8,8 @@
  * with a terminal `result` record. Without `--force` (or `--yolo`), file
  * edits are only proposed, not applied — so the write/read-only split maps
  * onto that flag rather than a separate sandbox flag the way Codex has one.
- * Auth is `CURSOR_API_KEY` (falls back to a local `agent login` session if
- * unset, which is out of scope for a supervised worker).
+ * Authentication is provider-owned: a supervised worker receives an isolated
+ * `HOME` and never inherits parent-environment tokens.
  *
  * Also verified 2026-08-08 against the installed binary directly (stdout to
  * a plain file, matching agentd's spawn model): a plain text exchange and a
@@ -32,7 +32,6 @@ import {
 } from "@pi-cmux/protocol";
 import { nullLogger, type Logger } from "@pi-cmux/observability";
 import {
-  buildWorkerEnvironment,
   superviseProcess,
   type ProcessOutcome,
   type SupervisorOptions,
@@ -103,7 +102,7 @@ export type StartArgs = Readonly<{
   stdoutPath: string;
   stderrPath: string;
   cwd: string;
-  env?: Readonly<Record<string, string>>;
+  env: Readonly<Record<string, string>>;
   argvPrefix?: readonly string[];
 }>;
 
@@ -130,13 +129,7 @@ export async function start(
     command: command ?? "agent",
     args: argv,
     cwd: args.cwd,
-    env:
-      args.env === undefined
-        ? buildWorkerEnvironment({
-            source: process.env,
-            allow: ["CURSOR_API_KEY"],
-          })
-        : { ...args.env },
+    env: { ...args.env },
     stdoutPath: args.stdoutPath,
     stderrPath: args.stderrPath,
     softTimeoutMs: args.task.limits.softTimeoutMs,

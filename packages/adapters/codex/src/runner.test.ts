@@ -6,9 +6,15 @@ import { describe, it } from "node:test";
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
 import { temporaryDirectory } from "@pi-cmux/testkit";
 
-import { normalizeStream, readEvents, start } from "./runner.ts";
+import {
+  normalizeStream,
+  readEvents,
+  start,
+  type StartArgs,
+} from "./runner.ts";
 
 const RUN_ID = "run_01JQZX3K5T7V9B2N4M6P8R0AWC";
+const FIXTURE_PATH = path.dirname(process.execPath);
 
 function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -17,6 +23,17 @@ function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
     ...overrides,
   };
 }
+
+const startArgsWithoutEnv = {
+  task: taskWith(),
+  runId: RUN_ID,
+  stdoutPath: "/tmp/stdout.ndjson",
+  stderrPath: "/tmp/stderr.log",
+  cwd: "/tmp",
+};
+
+// @ts-expect-error StartArgs requires the sandbox-provided environment.
+void (startArgsWithoutEnv satisfies StartArgs);
 
 async function writeWorker(root: string): Promise<string> {
   const worker = path.join(root, "codex-fixture.mjs");
@@ -61,7 +78,7 @@ describe("Codex runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: FIXTURE_PATH,
         },
       },
       { command: worker },
@@ -105,7 +122,7 @@ describe("Codex runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: FIXTURE_PATH,
         },
       },
       { command: worker },
@@ -131,7 +148,7 @@ describe("Codex runner", () => {
         stdoutPath: path.join(dir.path, "stdout.ndjson"),
         stderrPath: path.join(dir.path, "stderr.log"),
         cwd: dir.path,
-        env: { HANG: "1", PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+        env: { HANG: "1", PATH: FIXTURE_PATH },
       },
       { command: worker, supervisor: { terminationGraceMs: 200 } },
     );

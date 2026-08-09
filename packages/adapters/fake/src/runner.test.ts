@@ -9,7 +9,13 @@ import {
   temporaryDirectory,
 } from "@pi-cmux/testkit";
 
-import { capabilities, normalizeStream, readEvents, start } from "./runner.ts";
+import {
+  capabilities,
+  normalizeStream,
+  readEvents,
+  start,
+  type StartArgs,
+} from "./runner.ts";
 
 const RUN_ID = "run_01JQZX3K5T7V9B2N4M6P8R0AWC";
 
@@ -21,6 +27,17 @@ function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
     ...overrides,
   };
 }
+
+const startArgsWithoutEnv = {
+  task: taskWith(),
+  runId: RUN_ID,
+  stdoutPath: "/tmp/stdout.ndjson",
+  stderrPath: "/tmp/stderr.log",
+  cwd: "/tmp",
+};
+
+// @ts-expect-error StartArgs requires the sandbox-provided environment.
+void (startArgsWithoutEnv satisfies StartArgs);
 
 async function runToCompletion(
   root: string,
@@ -35,6 +52,7 @@ async function runToCompletion(
       stdoutPath,
       stderrPath: path.join(root, "stderr.log"),
       cwd: root,
+      env: {},
     },
     { workerArgs },
   );
@@ -98,6 +116,7 @@ describe("driving a real process", () => {
         stdoutPath: path.join(dir.path, "stdout.ndjson"),
         stderrPath: path.join(dir.path, "stderr.log"),
         cwd: dir.path,
+        env: {},
       },
       {
         workerArgs: ["--emit", "1", "--hang"],
@@ -135,6 +154,7 @@ describe("driving a real process", () => {
         stdoutPath: path.join(dir.path, "stdout.ndjson"),
         stderrPath: path.join(dir.path, "stderr.log"),
         cwd: dir.path,
+        env: {},
       },
       { workerArgs: ["--emit", "1"] },
     );

@@ -13,7 +13,6 @@ import {
 } from "@pi-cmux/protocol";
 import { nullLogger, type Logger } from "@pi-cmux/observability";
 import {
-  buildWorkerEnvironment,
   superviseProcess,
   type ProcessOutcome,
   type SupervisorOptions,
@@ -74,7 +73,7 @@ export type StartArgs = Readonly<{
   stdoutPath: string;
   stderrPath: string;
   cwd: string;
-  env?: Readonly<Record<string, string>>;
+  env: Readonly<Record<string, string>>;
   argvPrefix?: readonly string[];
 }>;
 
@@ -102,13 +101,7 @@ export async function start(
     command: command ?? "codex",
     args: argv,
     cwd: args.cwd,
-    env:
-      args.env === undefined
-        ? buildWorkerEnvironment({
-            source: process.env,
-            allow: ["CODEX_HOME", "OPENAI_API_KEY"],
-          })
-        : { ...args.env },
+    env: { ...args.env },
     stdoutPath: args.stdoutPath,
     stderrPath: args.stderrPath,
     softTimeoutMs: args.task.limits.softTimeoutMs,

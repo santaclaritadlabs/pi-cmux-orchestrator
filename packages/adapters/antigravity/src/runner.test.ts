@@ -6,9 +6,20 @@ import { describe, it } from "node:test";
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
 import { readFixture, temporaryDirectory } from "@pi-cmux/testkit";
 
-import { readEvents, start } from "./runner.ts";
+import { readEvents, start, type StartArgs } from "./runner.ts";
 
 const RUN_ID = "run_01JQZX3K5T7V9B2N4M6P8R0AWC";
+
+const startArgsWithoutEnv = {
+  task: sampleTask(),
+  runId: RUN_ID,
+  stdoutPath: "/tmp/stdout.ndjson",
+  stderrPath: "/tmp/stderr.log",
+  cwd: "/tmp",
+};
+
+// @ts-expect-error StartArgs requires an environment supplied by the sandbox.
+void (startArgsWithoutEnv satisfies StartArgs);
 
 function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -55,7 +66,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: path.dirname(process.execPath),
         },
       },
       { command: worker },
@@ -101,7 +112,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: path.dirname(process.execPath),
         },
       },
       { command: worker },
@@ -152,7 +163,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           FIXTURE_CONTENT: raw,
-          PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+          PATH: path.dirname(process.execPath),
         },
       },
       { command: worker },
