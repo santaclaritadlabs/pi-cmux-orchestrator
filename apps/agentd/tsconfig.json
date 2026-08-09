@@ -11,6 +11,10 @@
     { "path": "../../packages/worktrees" },
     { "path": "../../packages/sandbox" },
     { "path": "../../packages/adapters/fake" },
+    { "path": "../../packages/adapters/codex" },
+    { "path": "../../packages/adapters/claude" },
+    { "path": "../../packages/adapters/cursor" },
+    { "path": "../../packages/adapters/antigravity" },
     { "path": "../../packages/testkit" }
   ]
 }

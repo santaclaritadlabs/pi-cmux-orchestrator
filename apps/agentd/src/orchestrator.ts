@@ -40,36 +40,26 @@ import {
   capabilities as fakeCapabilities,
   readEvents as readWorkerEvents,
   start as startWorker,
-  type AgentCapabilities as FakeCapabilities,
-  type RunHandle as FakeRunHandle,
 } from "@pi-cmux/adapter-fake";
 import {
   capabilities as codexCapabilities,
   readEvents as readCodexEvents,
   start as startCodexWorker,
-  type AgentCapabilities as CodexCapabilities,
-  type RunHandle as CodexRunHandle,
 } from "@pi-cmux/adapter-codex";
 import {
   capabilities as claudeCapabilities,
   readEvents as readClaudeEvents,
   start as startClaudeWorker,
-  type AgentCapabilities as ClaudeCapabilities,
-  type RunHandle as ClaudeRunHandle,
 } from "@pi-cmux/adapter-claude";
 import {
   capabilities as cursorCapabilities,
   readEvents as readCursorEvents,
   start as startCursorWorker,
-  type AgentCapabilities as CursorCapabilities,
-  type RunHandle as CursorRunHandle,
 } from "@pi-cmux/adapter-cursor";
 import {
   capabilities as antigravityCapabilities,
   readEvents as readAntigravityEvents,
   start as startAntigravityWorker,
-  type AgentCapabilities as AntigravityCapabilities,
-  type RunHandle as AntigravityRunHandle,
 } from "@pi-cmux/adapter-antigravity";
 import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
 import type { SandboxPlacement, SandboxRegistry } from "@pi-cmux/sandbox";
@@ -78,19 +68,23 @@ import type { WorktreeManager } from "@pi-cmux/worktrees";
 import { processOwner } from "./daemon-lock.ts";
 import type { RepositoryRegistry } from "./repositories.ts";
 
-type RunHandle =
-  | FakeRunHandle
-  | CodexRunHandle
-  | ClaudeRunHandle
-  | CursorRunHandle
-  | AntigravityRunHandle;
+/** Provider-neutral process contract consumed by the execution supervisor. */
+type RunHandle = Readonly<{
+  runId: string;
+  taskId: string;
+  pid: number;
+  startedAtMs: number;
+  cancel: () => void;
+  completed: Promise<ProcessOutcome>;
+}>;
 
-export type WorkerCapabilities =
-  | FakeCapabilities
-  | CodexCapabilities
-  | ClaudeCapabilities
-  | CursorCapabilities
-  | AntigravityCapabilities;
+/** Static provider declaration exposed through agentd's public RPC surface. */
+export type WorkerCapabilities = Readonly<{
+  kind: AgentTask["worker"]["kind"];
+  supportsGracefulCancel: boolean;
+  supportsStructuredOutput: boolean;
+  eventTypes: readonly AgentEvent["type"][];
+}>;
 
 /**
  * Every reviewed adapter's static capability declaration, keyed by kind.
