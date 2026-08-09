@@ -2,27 +2,37 @@
  * Translate `claude -p --output-format stream-json` records into the public
  * `AgentEvent` contract.
  *
- * Protocol reference: docs.claude.com "Run Claude Code programmatically"
- * (headless mode) and the Agent SDK TypeScript reference for `SDKMessage`,
- * fetched during implementation. Confirmed from the official docs: `-p
- * --output-format stream-json --verbose` emits one JSON object per line; the
- * first is `{"type":"system","subtype":"init",...}`; the last is
- * `{"type":"result",...}` carrying `subtype`, `is_error`, `duration_ms`,
- * `total_cost_usd`, `num_turns`, `result`, `session_id`, `usage`; a
- * `system/api_retry` event can appear mid-stream with `attempt`,
- * `max_retries`, `retry_delay_ms`, `error_status`, `error`; subagent messages
- * carry a `parent_tool_use_id`. SIGTERM makes the CLI abort the turn and exit
- * 143 (a normal supervised cancellation, not a crash).
+ * Verified 2026-08-08 against the installed `claude` CLI v2.1.226 with stdout
+ * redirected to a plain file (agentd's actual spawn model, never a pty), not
+ * merely against docs.claude.com "Run Claude Code programmatically" and the
+ * Agent SDK TypeScript reference for `SDKMessage`. Live captures confirm:
+ * `assistant`/`user` records wrap the Anthropic Messages API shape exactly as
+ * assumed — `{"type":"assistant","message":{"id","role","content":[...]},
+ * "session_id","parent_tool_use_id"}` with `{"type":"text","text"}`,
+ * `{"type":"tool_use","id","name","input"}` and
+ * `{"type":"tool_result","tool_use_id","content"}` content blocks — and
+ * `tool_use.id` → `tool_result.tool_use_id` correlation works as coded, so
+ * this file needed no schema change. Real streams also showed, all already
+ * handled correctly by the existing forward-compatible design: a `thinking`
+ * content block (falls through `#translateBlock`'s default → ignored, same
+ * as `redacted_thinking`/`image`); a top-level `rate_limit_event` record not
+ * previously documented (falls through `#translate`'s default → ignored);
+ * and, when not run through `--bare`, `system/hook_started` and
+ * `system/hook_response` subtypes (irrelevant in production, which always
+ * passes `--bare`, but harmless — `system` is ignored regardless of
+ * subtype). A live SIGTERM against a running `claude -p` process confirmed
+ * exit 143 with a clean, non-truncated NDJSON tail, backing
+ * `supportsGracefulCancel: true` in runner.ts with an observed run, not only
+ * the docs citation there.
  *
- * ASSUMPTION (not verified against a literal wire capture, only paraphrased
- * secondary documentation): `assistant`/`user` records wrap the Anthropic
- * Messages API shape as `{"type":"assistant","message":{"id","role","content":[...]},
- * "session_id","parent_tool_use_id"}`, where `content` blocks are the
- * standard `{"type":"text","text"}`, `{"type":"tool_use","id","name","input"}`
- * and `{"type":"tool_result","tool_use_id","content","is_error"}` shapes from
- * the Messages API. This mirrors both the SDK reference fetched here and
- * every other public `stream-json` example. If a captured production stream
- * disagrees, only this file and its fixture need to change.
+ * Caveat: no `ANTHROPIC_API_KEY` was available in the verification
+ * environment, so live captures used the ambient authenticated session
+ * rather than `claude`'s `--bare`-mode auth path. A separate `--bare` run
+ * (which fails auth before any model call) reproduced the same
+ * `system/init` → `assistant` → `result` envelope shape for the portion
+ * reachable before that failure, so `--bare` vs. not is not believed to
+ * change the wire format — but that specific combination (`--bare` +
+ * successful auth + tool use) remains unexercised here.
  *
  * Provider records are untrusted and intentionally do not cross this module.
  * Unknown provider fields and event/item types are ignored for forward

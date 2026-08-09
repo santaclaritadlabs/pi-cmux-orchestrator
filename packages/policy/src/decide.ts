@@ -100,12 +100,27 @@ type Rule = Readonly<{
 const RULES: readonly Rule[] = [
   {
     name: "worker.kind-supported",
-    evaluate: (task) =>
-      // Only reviewed, first-party adapters are admitted. New provider kinds
-      // remain denied until their policy review explicitly enables them.
-      task.worker.kind === "fake" || task.worker.kind === "codex"
+    evaluate: (task) => {
+      // Only reviewed, first-party adapters are admitted. P5 reviewed and
+      // live-verified claude, cursor, and antigravity against their real
+      // CLIs (2026-08-08) alongside codex and fake, so all five are enabled.
+      // The type already makes `task.worker.kind` a closed union, but this
+      // stays a genuine runtime check rather than relying on the compiler
+      // alone — the same reasoning as `constraints.no-push` below: a task
+      // reaching the engine through a cast or a stale schema must still be
+      // refused if its kind is ever outside the reviewed set.
+      const kind: string = task.worker.kind;
+      const reviewed: ReadonlySet<string> = new Set([
+        "fake",
+        "codex",
+        "claude",
+        "cursor",
+        "antigravity",
+      ]);
+      return reviewed.has(kind)
         ? undefined
-        : `worker kind '${task.worker.kind}' is not enabled in this phase`,
+        : `worker kind '${kind}' is not enabled in this phase`;
+    },
   },
   {
     name: "constraints.no-push",

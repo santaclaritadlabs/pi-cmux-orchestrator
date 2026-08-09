@@ -54,11 +54,29 @@ describe("the default is deny", () => {
     assert.equal(decision.ok, true);
   });
 
+  it("admits the Claude, Cursor, and Antigravity workers once P5 reviews them", async () => {
+    await using dir = await temporaryDirectory();
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      const task = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+      });
+
+      const decision = await decide(task);
+      assert.equal(decision.ok, true, `expected ${kind} to be admitted`);
+    }
+  });
+
   it("is never retryable — a denial must not be beatable by looping", async () => {
     await using dir = await temporaryDirectory();
-    const task = await taskIn(dir.path, {
-      worker: { kind: "cursor", profile: "default" },
-    });
+    const base = await taskIn(dir.path);
+    // A worker kind outside the reviewed set can only reach `decide` through
+    // a stale schema or a cast — parseAgentTask's closed union already
+    // excludes it — but the runtime check in worker.kind-supported guards it
+    // anyway, so this still exercises a real denial rather than a vacuous one.
+    const task = {
+      ...base,
+      worker: { kind: "unreviewed-worker-kind", profile: "default" },
+    } as unknown as AgentTask;
 
     const decision = await decide(task);
     assert.equal(decision.ok, false);
@@ -81,8 +99,9 @@ describe("the default is deny", () => {
 
     const decision = await decide(task);
     assert.equal(decision.ok, false);
-    // worker.kind-supported comes first in the table.
-    assert.equal(decision.error.details?.["rule"], "worker.kind-supported");
+    // constraints.writes comes before constraints.network in the table, and
+    // claude is now a reviewed worker kind so it no longer masks this case.
+    assert.equal(decision.error.details?.["rule"], "constraints.writes");
   });
 });
 

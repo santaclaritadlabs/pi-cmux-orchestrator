@@ -3,6 +3,7 @@
  *
  *     agentd start                 run the daemon in the foreground
  *     agentd status                is it up, and how many runs are live
+ *     agentd capabilities          what each reviewed worker kind supports
  *     agentd runs                  every run on disk, oldest first
  *     agentd logs --follow <runId> tail a run's normalized events
  *
@@ -40,6 +41,7 @@ function usage(): void {
       "",
       "  start                    run the daemon in the foreground",
       "  status                   report daemon health",
+      "  capabilities             list each reviewed worker kind's capabilities",
       "  runs                     list runs, oldest first",
       "  logs --follow <runId>    stream a run's events",
       "",
@@ -199,6 +201,24 @@ async function commandStatus(): Promise<number> {
   });
 }
 
+async function commandCapabilities(): Promise<number> {
+  return await withClient(async (connected) => {
+    if (!connected.ok) {
+      process.stderr.write(`${connected.error.safeMessage}\n`);
+      return 1;
+    }
+    const capabilities = await connected.value.call("worker.capabilities");
+    connected.value.close();
+
+    if (!capabilities.ok) {
+      process.stderr.write(`${capabilities.error.safeMessage}\n`);
+      return 1;
+    }
+    out(JSON.stringify(capabilities.value, null, 2));
+    return 0;
+  });
+}
+
 async function commandRuns(): Promise<number> {
   // Reads the store directly: listing runs needs no daemon, and an operator
   // investigating a daemon that will not start still needs to see them.
@@ -262,6 +282,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return await commandStart();
     case "status":
       return await commandStatus();
+    case "capabilities":
+      return await commandCapabilities();
     case "runs":
       return await commandRuns();
     case "logs":

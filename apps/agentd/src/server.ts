@@ -271,6 +271,11 @@ function handleConnection(
           uptimeMs: Math.round(process.uptime() * 1000),
         });
 
+      // No params: the capability list is static per reviewed adapter, not
+      // per task, so there is nothing for a caller to supply.
+      case "worker.capabilities":
+        return rpcOk(id, { workers: orchestrator.workerCapabilities() });
+
       case "task.create": {
         const parsed = createParamsSchema.safeParse(params);
         if (!parsed.success) {

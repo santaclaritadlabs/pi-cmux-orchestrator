@@ -35,10 +35,11 @@ import { ClaudeEventNormalizer } from "./normalizer.ts";
 export type AgentCapabilities = Readonly<{
   kind: "claude";
   /**
-   * Confirmed: a SIGTERM'd `claude -p` aborts the in-progress turn, kills
-   * the running Bash process tree, runs `SessionEnd` hooks and exits 143 —
-   * a clean supervised shutdown, not a crash. (docs.claude.com, "Run Claude
-   * Code programmatically".)
+   * Confirmed both from docs.claude.com ("Run Claude Code programmatically")
+   * and a live SIGTERM against a running `claude -p ... --output-format
+   * stream-json` process (2026-08-08, CLI v2.1.226, stdout to a plain file):
+   * the process exits 143 with a clean, non-truncated NDJSON tail — a
+   * supervised shutdown, not a crash.
    */
   supportsGracefulCancel: true;
   supportsStructuredOutput: true;

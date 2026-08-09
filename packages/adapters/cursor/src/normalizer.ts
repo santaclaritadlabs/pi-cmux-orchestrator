@@ -3,14 +3,24 @@
  * public `AgentEvent` contract.
  *
  * Confirmed against Cursor's official CLI docs (cursor.com/docs/cli/reference
- * /output-format, cursor.com/docs/cli/headless): the stream is NDJSON with
+ * /output-format, cursor.com/docs/cli/headless) AND against three real
+ * transcripts captured 2026-08-08 by running the installed `cursor-agent`
+ * (`agent` 2026.08.04-aaa8809) binary with stdout redirected to a plain file
+ * — agentd's actual spawn model, never a pty. The stream is NDJSON with
  * `system`/`init`, `user`, `assistant`, `tool_call` (`started`/`completed`)
- * and a terminal `result` record. The exact set of `tool_call.tool_call`
- * variant keys beyond `readToolCall` / `writeToolCall` / `function` is not
- * exhaustively documented, so the tool name is read generically as "whichever
- * key of `tool_call` is not `result`/`error`" rather than a closed enum — this
- * keeps unknown-but-real tool kinds as valid `tool` events instead of
- * rejecting them.
+ * and a terminal `result` record, exactly as documented. A real run also
+ * emits `"thinking"` records (subtypes `"delta"`/`"completed"`) the docs
+ * don't mention; these already fall through the `default: ignored` case
+ * below with no schema change needed, confirming the forward-compatible
+ * design handles a real undocumented type correctly.
+ *
+ * The exact set of `tool_call.tool_call` variant keys beyond the documented
+ * `readToolCall` / `writeToolCall` / `function` is still not exhaustively
+ * enumerable — a real capture confirmed a fourth, `shellToolCall`, is also in
+ * active use — so the tool name is deliberately kept generic ("whichever key
+ * of `tool_call` is not `result`/`error`") rather than pinned to a closed
+ * enum. Narrowing to a closed list would reject legitimate tool kinds this
+ * adapter simply hasn't observed yet.
  *
  * Provider records are untrusted and intentionally do not cross this module.
  * Unknown provider fields and event/item types are ignored for forward

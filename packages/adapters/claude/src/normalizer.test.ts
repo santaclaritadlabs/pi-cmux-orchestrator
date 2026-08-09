@@ -52,6 +52,71 @@ describe("ClaudeEventNormalizer", () => {
     assert.equal(batch.offset, Buffer.byteLength(raw, "utf8"));
   });
 
+  it("normalizes a real `claude -p --output-format stream-json` transcript (no tool calls)", async () => {
+    // Captured 2026-08-08 by running the installed `claude` CLI v2.1.226
+    // with stdout redirected to a plain file — agentd's actual spawn model.
+    const raw = await readFixture("claude", "captured-example.ndjson");
+    const batch = normalizeClaudeStream(raw, OPTIONS);
+
+    // system/init, a rate_limit_event, and the terminal result are all
+    // transport/session bookkeeping this adapter does not surface.
+    assert.equal(batch.rejected, 0);
+    assert.equal(batch.ignored, 3);
+    assert.equal(batch.events.length, 1);
+    assert.deepEqual(
+      batch.events.map((event) => [event.sequence, event.type]),
+      [[7, "log"]],
+    );
+    assert.deepEqual(batch.events[0]?.payload, {
+      level: "info",
+      message: "pong",
+    });
+    assert.equal(batch.pendingBytes, 0);
+    assert.equal(batch.offset, Buffer.byteLength(raw, "utf8"));
+  });
+
+  it("normalizes a real transcript with a tool call (thinking block, tool_use, tool_result)", async () => {
+    // Captured the same way; this run asked Claude to write a file via its
+    // own Write tool, exercising the real tool_use/tool_result correlation
+    // and confirming a live `thinking` content block is ignored, not
+    // rejected.
+    const raw = await readFixture(
+      "claude",
+      "captured-tool-call-example.ndjson",
+    );
+    const batch = normalizeClaudeStream(raw, OPTIONS);
+
+    // system/init, a thinking block, a rate_limit_event, and the terminal
+    // result.
+    assert.equal(batch.rejected, 0);
+    assert.equal(batch.ignored, 4);
+    assert.equal(batch.events.length, 3);
+    assert.deepEqual(
+      batch.events.map((event) => [event.sequence, event.type]),
+      [
+        [7, "tool"],
+        [8, "tool"],
+        [9, "log"],
+      ],
+    );
+    assert.deepEqual(batch.events[0]?.payload, {
+      phase: "started",
+      callId: "toolu_0173SGXcLUsdHiCzWJDJwKbL",
+      tool: "Write",
+    });
+    assert.deepEqual(batch.events[1]?.payload, {
+      phase: "completed",
+      callId: "toolu_0173SGXcLUsdHiCzWJDJwKbL",
+      tool: "Write",
+    });
+    assert.deepEqual(batch.events[2]?.payload, {
+      level: "info",
+      message: 'Done — created verify.txt with the content "hello-verify".',
+    });
+    assert.equal(batch.pendingBytes, 0);
+    assert.equal(batch.offset, Buffer.byteLength(raw, "utf8"));
+  });
+
   it("names a tool_result by the tool_use it correlates with and redacts leaked secrets", () => {
     const raw = [
       JSON.stringify({

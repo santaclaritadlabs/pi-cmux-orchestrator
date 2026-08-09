@@ -18,6 +18,88 @@ const OPTIONS: CursorNormalizerOptions = {
 };
 
 describe("CursorEventNormalizer", () => {
+  it("normalizes a real `cursor-agent -p --output-format stream-json` transcript (no tool calls)", async () => {
+    // Captured 2026-08-08 by running the installed `cursor-agent` (agent
+    // 2026.08.04-aaa8809) binary with stdout redirected to a plain file —
+    // agentd's actual spawn model, never a pty.
+    const raw = await readFixture("cursor", "captured-example.ndjson");
+    const batch = normalizeCursorStream(raw, OPTIONS);
+
+    // system/init, the echoed user record, and a non-error result are all
+    // transport bookkeeping this adapter does not surface.
+    assert.equal(batch.rejected, 0);
+    assert.equal(batch.ignored, 3);
+    assert.equal(batch.events.length, 1);
+    assert.deepEqual(
+      batch.events.map((event) => [event.sequence, event.type]),
+      [[7, "log"]],
+    );
+    assert.deepEqual(batch.events[0]?.payload, {
+      level: "info",
+      message: "pong",
+    });
+    assert.equal(batch.pendingBytes, 0);
+    assert.equal(batch.offset, Buffer.byteLength(raw, "utf8"));
+  });
+
+  it("normalizes a real transcript with parallel tool calls, confirming the shellToolCall/readToolCall variant keys", async () => {
+    // Captured the same way, from a prompt that triggers a shell command and
+    // a file read in parallel. This is the transcript that confirmed the
+    // `tool_call.tool_call` variant-key set beyond the two documented ones
+    // (readToolCall, writeToolCall): a real run also emits `shellToolCall`.
+    // It also confirmed a `"thinking"` event type the docs don't mention,
+    // which the generic default-case fallthrough already treats as ignored
+    // rather than rejected — no normalizer change was needed for either.
+    const raw = await readFixture(
+      "cursor",
+      "captured-parallel-tool-calls-example.ndjson",
+    );
+    const batch = normalizeCursorStream(raw, OPTIONS);
+
+    // system/init, the echoed user record, 16 "thinking" deltas/completion,
+    // and a non-error result are all ignored.
+    assert.equal(batch.rejected, 0);
+    assert.equal(batch.ignored, 19);
+    assert.equal(batch.events.length, 5);
+    assert.deepEqual(
+      batch.events.map((event) => [event.sequence, event.type]),
+      [
+        [7, "tool"],
+        [8, "tool"],
+        [9, "tool"],
+        [10, "tool"],
+        [11, "log"],
+      ],
+    );
+    assert.deepEqual(batch.events[0]?.payload, {
+      phase: "started",
+      callId: "chatcmpl-tool-6ad586309b774fbba1673b4998bd7eb5",
+      tool: "shellToolCall",
+    });
+    assert.deepEqual(batch.events[1]?.payload, {
+      phase: "started",
+      callId: "chatcmpl-tool-1e349c8c75464af59f15e368555063a9",
+      tool: "readToolCall",
+    });
+    assert.deepEqual(batch.events[2]?.payload, {
+      phase: "completed",
+      callId: "chatcmpl-tool-1e349c8c75464af59f15e368555063a9",
+      tool: "readToolCall",
+    });
+    assert.deepEqual(batch.events[3]?.payload, {
+      phase: "completed",
+      callId: "chatcmpl-tool-6ad586309b774fbba1673b4998bd7eb5",
+      tool: "shellToolCall",
+    });
+    assert.deepEqual(batch.events[4]?.payload, {
+      level: "info",
+      message:
+        "Here's what I found:\n\n**Directory listing** (`ls -la`):\n- `err1.log` (0 bytes)\n- `err2.log` (0 bytes)\n- `out1.ndjson` (924 bytes)\n- `out2.ndjson` (5530 bytes)\n- `sample.txt` (23 bytes)\n\n**Contents of `sample.txt`**:\n\nThe file contains a single line:\n\n```\nhello from a test file\n```\n\nThat's it — just a greeting message followed by a trailing newline.",
+    });
+    assert.equal(batch.pendingBytes, 0);
+    assert.equal(batch.offset, Buffer.byteLength(raw, "utf8"));
+  });
+
   it("normalizes the documented Cursor stream-json example", async () => {
     const raw = await readFixture("cursor", "official-doc-example.ndjson");
     const batch = normalizeCursorStream(raw, OPTIONS);

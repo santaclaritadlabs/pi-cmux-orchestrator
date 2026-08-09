@@ -68,6 +68,16 @@ describe("PiAgentdBridge", () => {
         "task.cancel": { ...run, state: "CANCELLED" },
         "task.result": result,
         "task.events": [event],
+        "worker.capabilities": {
+          workers: [
+            {
+              kind: "codex",
+              supportsGracefulCancel: false,
+              supportsStructuredOutput: true,
+              eventTypes: ["status", "log"],
+            },
+          ],
+        },
       }),
     );
     assert.equal((await bridge.createTask(sampleTask())).ok, true);
@@ -75,6 +85,10 @@ describe("PiAgentdBridge", () => {
     const health = await bridge.health();
     assert.ok(health.ok);
     assert.equal(health.value.pid, 42);
+    const capabilities = await bridge.capabilities();
+    assert.ok(capabilities.ok);
+    assert.equal(capabilities.value.length, 1);
+    assert.equal(capabilities.value[0]?.kind, "codex");
     assert.equal((await bridge.start(run.runId)).ok, true);
     assert.equal((await bridge.result(run.runId)).ok, true);
     const snapshot = await bridge.snapshot(run.runId);
@@ -91,6 +105,26 @@ describe("PiAgentdBridge", () => {
       fakeClient({ "task.status": { runId: "not-a-record" } }),
     );
     const response = await bridge.status(run.runId);
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, "RPC_MALFORMED");
+  });
+
+  it("rejects a worker.capabilities response naming an unreviewed kind", async () => {
+    const bridge = PiAgentdBridge.fromClient(
+      fakeClient({
+        "worker.capabilities": {
+          workers: [
+            {
+              kind: "not-a-real-kind",
+              supportsGracefulCancel: false,
+              supportsStructuredOutput: true,
+              eventTypes: [],
+            },
+          ],
+        },
+      }),
+    );
+    const response = await bridge.capabilities();
     assert.equal(response.ok, false);
     assert.equal(response.error.code, "RPC_MALFORMED");
   });

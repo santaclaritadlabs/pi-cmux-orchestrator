@@ -37,28 +37,38 @@ import {
   type PolicyProfile,
 } from "@pi-cmux/policy";
 import {
+  capabilities as fakeCapabilities,
   readEvents as readWorkerEvents,
   start as startWorker,
+  type AgentCapabilities as FakeCapabilities,
   type RunHandle as FakeRunHandle,
 } from "@pi-cmux/adapter-fake";
 import {
+  capabilities as codexCapabilities,
   readEvents as readCodexEvents,
   start as startCodexWorker,
+  type AgentCapabilities as CodexCapabilities,
   type RunHandle as CodexRunHandle,
 } from "@pi-cmux/adapter-codex";
 import {
+  capabilities as claudeCapabilities,
   readEvents as readClaudeEvents,
   start as startClaudeWorker,
+  type AgentCapabilities as ClaudeCapabilities,
   type RunHandle as ClaudeRunHandle,
 } from "@pi-cmux/adapter-claude";
 import {
+  capabilities as cursorCapabilities,
   readEvents as readCursorEvents,
   start as startCursorWorker,
+  type AgentCapabilities as CursorCapabilities,
   type RunHandle as CursorRunHandle,
 } from "@pi-cmux/adapter-cursor";
 import {
+  capabilities as antigravityCapabilities,
   readEvents as readAntigravityEvents,
   start as startAntigravityWorker,
+  type AgentCapabilities as AntigravityCapabilities,
   type RunHandle as AntigravityRunHandle,
 } from "@pi-cmux/adapter-antigravity";
 import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
@@ -74,6 +84,33 @@ type RunHandle =
   | ClaudeRunHandle
   | CursorRunHandle
   | AntigravityRunHandle;
+
+export type WorkerCapabilities =
+  | FakeCapabilities
+  | CodexCapabilities
+  | ClaudeCapabilities
+  | CursorCapabilities
+  | AntigravityCapabilities;
+
+/**
+ * Every reviewed adapter's static capability declaration, keyed by kind.
+ *
+ * These never change at runtime — no process is spawned to compute them —
+ * so this is safe to call before a task exists, unlike everything else on
+ * `Orchestrator`. `worker.kind-supported` in `@pi-cmux/policy` is the
+ * separate, authoritative gate on which kinds a task may actually request;
+ * this list exists so a caller can discover what each one supports without
+ * first submitting a task and reading the denial.
+ */
+function allWorkerCapabilities(): readonly WorkerCapabilities[] {
+  return [
+    fakeCapabilities(),
+    codexCapabilities(),
+    claudeCapabilities(),
+    cursorCapabilities(),
+    antigravityCapabilities(),
+  ];
+}
 
 type WorkerStartArgs = Parameters<typeof startWorker>[0];
 type WorkerStartOptions = Readonly<{
@@ -1056,5 +1093,9 @@ export class Orchestrator {
 
   public liveRunIds(): readonly string[] {
     return [...this.#running.keys()];
+  }
+
+  public workerCapabilities(): readonly WorkerCapabilities[] {
+    return allWorkerCapabilities();
   }
 }

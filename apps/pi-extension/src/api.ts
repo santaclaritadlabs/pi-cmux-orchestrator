@@ -31,6 +31,7 @@ export type PiCommandResponse = Readonly<{
 
 export const PI_COMMANDS = [
   "agentd.health",
+  "agentd.capabilities",
   "agentd.create",
   "agentd.createAndStart",
   "agentd.start",
@@ -88,6 +89,10 @@ export function registerPiExtension(
       input.args.length === 0
         ? response(await bridge.health())
         : commandError("agentd.health takes no arguments"),
+    "agentd.capabilities": async (input) =>
+      input.args.length === 0
+        ? response(await bridge.capabilities())
+        : commandError("agentd.capabilities takes no arguments"),
     "agentd.create": async (input) => {
       const value = jsonArgument(input);
       return value === undefined

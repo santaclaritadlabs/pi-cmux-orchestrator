@@ -10,6 +10,13 @@
  * onto that flag rather than a separate sandbox flag the way Codex has one.
  * Auth is `CURSOR_API_KEY` (falls back to a local `agent login` session if
  * unset, which is out of scope for a supervised worker).
+ *
+ * Also verified 2026-08-08 against the installed binary directly (stdout to
+ * a plain file, matching agentd's spawn model): a plain text exchange and a
+ * parallel-tool-call exchange both matched the documented record shapes with
+ * no surprises; see the normalizer's module docstring and
+ * fixtures/cursor/captured-*.ndjson for what was captured, and the
+ * `supportsGracefulCancel` doc below for the signal-handling finding.
  */
 import { appendFile, open } from "node:fs/promises";
 
@@ -35,9 +42,16 @@ import { CursorEventNormalizer } from "./normalizer.ts";
 
 export type AgentCapabilities = Readonly<{
   kind: "cursor";
-  // Not confirmed by public docs whether cursor-agent handles SIGINT/SIGTERM
-  // as a graceful stop-and-summarize vs. an abrupt kill; assume the
-  // conservative default until observed otherwise, matching the Codex adapter.
+  /**
+   * Confirmed 2026-08-08 against the installed `cursor-agent` binary
+   * (2026.08.04-aaa8809): sending SIGTERM (exit 143) or SIGINT (exit 130) to
+   * a `cursor-agent -p --output-format stream-json` process mid-run kills it
+   * immediately with no terminal `result` record and no partial output
+   * beyond what had already streamed — an abrupt kill, not a graceful
+   * stop-and-summarize. Not a documented behavior; verified by directly
+   * signaling the real process. `false` is now a confirmed finding, not a
+   * conservative default.
+   */
   supportsGracefulCancel: false;
   supportsStructuredOutput: true;
   eventTypes: readonly AgentEvent["type"][];

@@ -5,6 +5,7 @@ import { connectToDaemon, type DaemonClient } from "@pi-cmux/agentd";
 import {
   DEFAULT_EVENT_PAGE_SIZE,
   err,
+  EVENT_TYPES,
   fromThrown,
   makeError,
   ok,
@@ -12,6 +13,7 @@ import {
   parseAgentResult,
   parseAgentTask,
   runIdSchema,
+  WORKER_KINDS,
   type AgentEvent,
   type AgentResult,
   type AgentdError,
@@ -42,6 +44,13 @@ export type DaemonHealth = Readonly<{
   uptimeMs: number;
 }>;
 
+export type WorkerCapabilities = Readonly<{
+  kind: (typeof WORKER_KINDS)[number];
+  supportsGracefulCancel: boolean;
+  supportsStructuredOutput: boolean;
+  eventTypes: readonly (typeof EVENT_TYPES)[number][];
+}>;
+
 const runRecordSchema = z
   .strictObject({
     runId: z.string().min(1),
@@ -69,6 +78,19 @@ const daemonHealthSchema = z
     liveRuns: z.int().nonnegative(),
     uptimeMs: z.number().nonnegative(),
   })
+  .readonly();
+
+const workerCapabilitiesSchema = z
+  .strictObject({
+    kind: z.enum(WORKER_KINDS),
+    supportsGracefulCancel: z.boolean(),
+    supportsStructuredOutput: z.boolean(),
+    eventTypes: z.array(z.enum(EVENT_TYPES)).readonly(),
+  })
+  .readonly();
+
+const workerCapabilitiesListSchema = z
+  .strictObject({ workers: z.array(workerCapabilitiesSchema).readonly() })
   .readonly();
 
 export type PiConnectionOptions = Readonly<{
@@ -102,6 +124,15 @@ function parseRunRecord(value: unknown): Result<RunRecord, AgentdError> {
 function parseHealth(value: unknown): Result<DaemonHealth, AgentdError> {
   const parsed = daemonHealthSchema.safeParse(value);
   return parsed.success ? ok(parsed.data) : invalidResponse("agentd health");
+}
+
+function parseWorkerCapabilities(
+  value: unknown,
+): Result<readonly WorkerCapabilities[], AgentdError> {
+  const parsed = workerCapabilitiesListSchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data.workers)
+    : invalidResponse("agentd worker capabilities");
 }
 
 function parseRunResult(value: unknown): Result<AgentResult, AgentdError> {
@@ -185,6 +216,14 @@ export class PiAgentdBridge {
   async health(): Promise<Result<DaemonHealth, AgentdError>> {
     const response = await this.daemon.call("daemon.health");
     return response.ok ? parseHealth(response.value) : response;
+  }
+
+  /** Discover what each reviewed worker kind supports, before creating a task. */
+  async capabilities(): Promise<
+    Result<readonly WorkerCapabilities[], AgentdError>
+  > {
+    const response = await this.daemon.call("worker.capabilities");
+    return response.ok ? parseWorkerCapabilities(response.value) : response;
   }
 
   async start(runId: string): Promise<Result<RunRecord, AgentdError>> {

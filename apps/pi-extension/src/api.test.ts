@@ -73,6 +73,44 @@ describe("Pi extension runtime adapter", () => {
     });
   });
 
+  it("routes agentd.capabilities with no arguments", async () => {
+    const runtime = host();
+    const bridge = PiAgentdBridge.fromClient(
+      fakeClient({
+        "worker.capabilities": {
+          workers: [
+            {
+              kind: "fake",
+              supportsGracefulCancel: true,
+              supportsStructuredOutput: true,
+              eventTypes: ["status"],
+            },
+          ],
+        },
+      }),
+    );
+    registerPiExtension(runtime.host, bridge);
+    const capabilities = await runtime.handlers.get("agentd.capabilities")?.({
+      args: [],
+    });
+    assert.deepEqual(capabilities, {
+      ok: true,
+      value: [
+        {
+          kind: "fake",
+          supportsGracefulCancel: true,
+          supportsStructuredOutput: true,
+          eventTypes: ["status"],
+        },
+      ],
+    });
+
+    const rejected = await runtime.handlers.get("agentd.capabilities")?.({
+      args: ["unexpected"],
+    });
+    assert.equal(rejected?.ok, false);
+  });
+
   it("routes validated task JSON through the bridge and rejects bad input", async () => {
     const runtime = host();
     const run = {

@@ -267,6 +267,24 @@ describe("authentication", () => {
     rpc.close();
     await harness.server.close();
   });
+
+  it("lists every reviewed worker kind's capabilities once authenticated", async () => {
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path);
+    const rpc = await client(harness);
+
+    const listed = await rpc.call("worker.capabilities");
+    assert.equal(listed.ok, true);
+    const workers = (listed.value as { workers: readonly { kind: string }[] })
+      .workers;
+    assert.deepEqual(
+      new Set(workers.map((worker) => worker.kind)),
+      new Set(["fake", "codex", "claude", "cursor", "antigravity"]),
+    );
+
+    rpc.close();
+    await harness.server.close();
+  });
 });
 
 describe("malformed requests", () => {

@@ -18,6 +18,7 @@ export const MAX_EVENT_PAGE_SIZE = 100;
 export const RPC_METHODS = [
   "daemon.hello",
   "daemon.health",
+  "worker.capabilities",
   "task.create",
   "task.start",
   "task.status",
