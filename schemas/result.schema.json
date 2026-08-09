@@ -232,6 +232,7 @@
             "ORPHANED_RUN",
             "WORKER_SPAWN_FAILED",
             "WORKER_EXITED_NONZERO",
+            "WORKER_PERMISSION_DENIED",
             "TIMEOUT_SOFT",
             "TIMEOUT_HARD",
             "CANCELLED",

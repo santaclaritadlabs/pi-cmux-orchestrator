@@ -44,23 +44,95 @@ describe("the default is deny", () => {
     assert.equal(decision.value.allowed, true);
   });
 
-  it("names the rule that denied, not just that something did", async () => {
+  it("admits the Codex worker once the P3 adapter is enabled", async () => {
     await using dir = await temporaryDirectory();
     const task = await taskIn(dir.path, {
       worker: { kind: "codex", profile: "default" },
     });
 
     const decision = await decide(task);
-    assert.equal(decision.ok, false);
-    assert.equal(decision.error.code, "POLICY_DENIED");
-    assert.equal(decision.error.details?.["rule"], "worker.kind-supported");
+    assert.equal(decision.ok, true);
+  });
+
+  it("admits the Claude, Cursor, and Antigravity workers once P5 reviews them", async () => {
+    await using dir = await temporaryDirectory();
+    // `worker.kind-requires-sandbox` demands `sandbox: "required"`, and
+    // `constraints.sandbox` in turn demands `profile.sandboxAvailable` — so
+    // admitting these kinds today needs a profile no phase actually ships
+    // yet, representing the day a real isolating provider is registered.
+    // See "allows what a later phase enables, without changing the rules"
+    // below for the same pattern.
+    const isolatedProfile: PolicyProfile = {
+      ...READ_ONLY_PROFILE,
+      sandboxAvailable: true,
+    };
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      const base = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+      });
+      const task: AgentTask = {
+        ...base,
+        constraints: { ...base.constraints, sandbox: "required" },
+      };
+
+      const decision = await decide(task, isolatedProfile);
+      assert.equal(decision.ok, true, `expected ${kind} to be admitted`);
+    }
+  });
+
+  it("denies Claude, Cursor, and Antigravity with sandbox: none", async () => {
+    // `"none"` would suppress the degraded-mode audit record ADR 0011 relies
+    // on, so it stays refused even though `"preferred"` is now admitted.
+    await using dir = await temporaryDirectory();
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      const task = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+        constraints: {
+          ...(await taskIn(dir.path)).constraints,
+          sandbox: "none",
+        },
+      });
+
+      const decision = await decide(task);
+      assert.equal(decision.ok, false, `expected ${kind}/none denied`);
+      assert.equal(
+        decision.error.details?.["rule"],
+        "worker.kind-requires-sandbox",
+      );
+    }
+  });
+
+  it("admits Claude, Cursor, and Antigravity with sandbox: preferred (ADR 0011)", async () => {
+    // The accepted MVP exception: no real isolating provider exists yet, so
+    // `sandboxAvailable` stays false, but `SandboxRegistry` reports and logs
+    // this as `degraded` rather than the task being silently refused or
+    // silently run unmarked.
+    await using dir = await temporaryDirectory();
+    for (const kind of ["claude", "cursor", "antigravity"] as const) {
+      const task = await taskIn(dir.path, {
+        worker: { kind, profile: "default" },
+        constraints: {
+          ...(await taskIn(dir.path)).constraints,
+          sandbox: "preferred",
+        },
+      });
+
+      const decision = await decide(task);
+      assert.equal(decision.ok, true, `expected ${kind}/preferred admitted`);
+    }
   });
 
   it("is never retryable — a denial must not be beatable by looping", async () => {
     await using dir = await temporaryDirectory();
-    const task = await taskIn(dir.path, {
-      worker: { kind: "cursor", profile: "default" },
-    });
+    const base = await taskIn(dir.path);
+    // A worker kind outside the reviewed set can only reach `decide` through
+    // a stale schema or a cast — parseAgentTask's closed union already
+    // excludes it — but the runtime check in worker.kind-supported guards it
+    // anyway, so this still exercises a real denial rather than a vacuous one.
+    const task = {
+      ...base,
+      worker: { kind: "unreviewed-worker-kind", profile: "default" },
+    } as unknown as AgentTask;
 
     const decision = await decide(task);
     assert.equal(decision.ok, false);
@@ -75,6 +147,9 @@ describe("the default is deny", () => {
       worker: { kind: "claude", profile: "default" },
       constraints: {
         ...base.constraints,
+        // Required, so worker.kind-requires-sandbox does not mask the
+        // ordering this test actually exercises.
+        sandbox: "required",
         mayWrite: true,
         network: "allow",
         networkAllowlist: [],
@@ -83,8 +158,9 @@ describe("the default is deny", () => {
 
     const decision = await decide(task);
     assert.equal(decision.ok, false);
-    // worker.kind-supported comes first in the table.
-    assert.equal(decision.error.details?.["rule"], "worker.kind-supported");
+    // constraints.writes comes before constraints.network in the table, and
+    // claude is now a reviewed worker kind so it no longer masks this case.
+    assert.equal(decision.error.details?.["rule"], "constraints.writes");
   });
 });
 

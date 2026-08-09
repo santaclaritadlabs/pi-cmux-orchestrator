@@ -1,9 +1,12 @@
 {
   "name": "@pi-cmux/agentd",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "description": "The execution supervisor daemon.",
+  "publishConfig": {
+    "directory": "bundle",
+    "linkDirectory": false
+  },
   "bin": {
     "agentd": "./dist/cli.js"
   },
@@ -14,9 +17,18 @@
     }
   },
   "scripts": {
-    "test": "node --test --test-reporter=spec --test-timeout=90000 --enable-source-maps \"dist/**/*.test.js\""
+    "test": "node --test --test-reporter=spec --test-timeout=90000 --enable-source-maps \"dist/**/*.test.js\"",
+    "bundle": "node scripts/bundle.mjs",
+    "verify": "node bundle/cli.js verify"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
   },
   "dependencies": {
+    "@pi-cmux/adapter-antigravity": "workspace:*",
+    "@pi-cmux/adapter-claude": "workspace:*",
+    "@pi-cmux/adapter-codex": "workspace:*",
+    "@pi-cmux/adapter-cursor": "workspace:*",
     "@pi-cmux/adapter-fake": "workspace:*",
     "@pi-cmux/core": "workspace:*",
     "@pi-cmux/observability": "workspace:*",

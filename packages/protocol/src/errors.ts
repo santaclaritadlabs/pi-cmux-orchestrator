@@ -115,6 +115,15 @@ const ERROR_SPECS = {
   // --- execution: the worker process misbehaved ----------------------------
   WORKER_SPAWN_FAILED: { retryable: true, category: "execution" },
   WORKER_EXITED_NONZERO: { retryable: false, category: "execution" },
+  /**
+   * The provider's own permission system refused an action mid-run — not
+   * `POLICY_DENIED`, which is agentd's admission-time decision before a
+   * worker ever starts. A provider CLI can exit 0 (and even claim its own
+   * `"SUCCESS"` in a terminal envelope) after this happens, so it is the one
+   * failure mode a caller must detect from the transcript, not the exit
+   * code or the provider's own verdict.
+   */
+  WORKER_PERMISSION_DENIED: { retryable: false, category: "execution" },
   /** Soft timeout: advisory, the run continues until the hard limit. */
   TIMEOUT_SOFT: { retryable: true, category: "execution" },
   /** Hard timeout: the process group was terminated. */

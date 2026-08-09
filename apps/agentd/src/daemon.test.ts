@@ -66,6 +66,7 @@ async function startHarness(
     ]),
     worktrees: new WorktreeManager({ root: paths.worktreeRoot }),
     sandbox: new SandboxRegistry([new HostSandboxProvider()]),
+    workerHomeRoot: paths.workerHomeRoot,
     workerArgs,
   });
 
@@ -231,7 +232,11 @@ describe("authentication", () => {
     const response = await new Promise<string>((resolve) => {
       const socket = connect(harness.server.socketPath, () => {
         socket.write(
-          `${JSON.stringify({ id: "1", method: "daemon.health" })}\n`,
+          `${JSON.stringify({
+            protocolVersion: "1",
+            id: "1",
+            method: "daemon.health",
+          })}\n`,
         );
       });
       socket.setEncoding("utf8");
@@ -259,6 +264,24 @@ describe("authentication", () => {
     const health = await rpc.call("daemon.health");
     assert.equal(health.ok, true);
     assert.equal((health.value as { status: string }).status, "ok");
+
+    rpc.close();
+    await harness.server.close();
+  });
+
+  it("lists every reviewed worker kind's capabilities once authenticated", async () => {
+    await using dir = await temporaryDirectory();
+    const harness = await startHarness(dir.path);
+    const rpc = await client(harness);
+
+    const listed = await rpc.call("worker.capabilities");
+    assert.equal(listed.ok, true);
+    const workers = (listed.value as { workers: readonly { kind: string }[] })
+      .workers;
+    assert.deepEqual(
+      new Set(workers.map((worker) => worker.kind)),
+      new Set(["fake", "codex", "claude", "cursor", "antigravity"]),
+    );
 
     rpc.close();
     await harness.server.close();

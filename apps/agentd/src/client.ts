@@ -12,8 +12,12 @@ import { connect, type Socket } from "node:net";
 import {
   err,
   fromThrown,
+  fromWireError,
   makeError,
+  MAX_RPC_MESSAGE_BYTES,
   ok,
+  PROTOCOL_VERSION,
+  rpcResponseSchema,
   type AgentdError,
   type Result,
 } from "@pi-cmux/protocol";
@@ -89,6 +93,17 @@ export async function connectToDaemon(options: {
 
   socket.on("data", (chunk: string) => {
     buffer += chunk;
+    if (Buffer.byteLength(buffer, "utf8") > MAX_RPC_MESSAGE_BYTES) {
+      socket.destroy();
+      settleAllPending(
+        makeError(
+          "RPC_MESSAGE_TOO_LARGE",
+          "the daemon response exceeds the limit",
+        ),
+      );
+      return;
+    }
+
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
 
@@ -99,27 +114,29 @@ export async function connectToDaemon(options: {
       try {
         decoded = JSON.parse(line);
       } catch {
-        continue;
+        socket.destroy();
+        settleAllPending(
+          makeError("RPC_MALFORMED", "the daemon returned invalid JSON"),
+        );
+        return;
       }
 
-      const response = decoded as {
-        id?: string;
-        ok?: boolean;
-        result?: unknown;
-        error?: AgentdError;
-      };
-      const responseId = response.id ?? "";
-      const waiter = pending.get(responseId);
-      if (waiter === undefined) continue;
-      pending.delete(responseId);
+      const response = rpcResponseSchema.safeParse(decoded);
+      if (!response.success) {
+        socket.destroy();
+        settleAllPending(
+          makeError("RPC_MALFORMED", "the daemon response envelope is invalid"),
+        );
+        return;
+      }
 
+      const waiter = pending.get(response.data.id);
+      if (waiter === undefined) continue;
+      pending.delete(response.data.id);
       waiter.resolve(
-        response.ok === true
-          ? ok(response.result)
-          : err(
-              response.error ??
-                makeError("INTERNAL", "the daemon returned no error detail"),
-            ),
+        response.data.ok
+          ? ok(response.data.result)
+          : err(fromWireError(response.data.error)),
       );
     }
   });
@@ -169,7 +186,12 @@ export async function connectToDaemon(options: {
       });
 
       socket.write(
-        `${JSON.stringify({ id, method, ...(params === undefined ? {} : { params }) })}\n`,
+        `${JSON.stringify({
+          protocolVersion: PROTOCOL_VERSION,
+          id,
+          method,
+          ...(params === undefined ? {} : { params }),
+        })}\n`,
       );
     });
   };

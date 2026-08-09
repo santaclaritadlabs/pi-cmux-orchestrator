@@ -423,6 +423,7 @@ export class RunStore {
   public async readEvents(
     runId: string,
     sinceSequence = -1,
+    limit?: number,
   ): Promise<Result<AgentEvent[], AgentdError>> {
     const raw = await tryCatchAsync(
       async () => await readFile(this.runFile(runId, "events"), "utf8"),
@@ -454,7 +455,7 @@ export class RunStore {
     }
 
     events.sort((a, b) => a.sequence - b.sequence);
-    return ok(events);
+    return ok(limit === undefined ? events : events.slice(0, limit));
   }
 
   // --- result -------------------------------------------------------------

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 # No credentials, no network access to provider CLIs, no write scope.
@@ -86,3 +87,59 @@ jobs:
             git log -1 --format=%s "$c" | pnpm exec commitlint || fail=1
           done
           exit $fail
+
+  # Publishes @pi-cmux/agentd to npm on a manually-pushed `vX.Y.Z` tag. Every
+  # internal @pi-cmux/* package stays private forever — this is the one
+  # public artifact, and its version comes from the tag, not from a
+  # committed version file: there is no per-package or changeset versioning
+  # here, by design (docs/adr/0009-release-packaging.md). `needs: verify`
+  # re-runs the whole repo gate against the tagged commit; a tag pushed
+  # before that commit's own CI went green is not trusted just because it is
+  # a tag.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No elevation: this job holds NPM_TOKEN, so it gets the workflow default
+    # (`contents: read`) like every other job — nothing here needs `write`,
+    # and a compromised action in this job is the one scenario that would
+    # actually cash in a wider grant. When GitHub Releases with a checksummed
+    # tarball stop being deferred (docs/adr/0009-release-packaging.md), add
+    # `contents: write` back at that point, not before.
+
+    steps:
+      # Every action in this job is pinned to a reviewed commit SHA, not a
+      # mutable tag — this is the one job with a real secret (NPM_TOKEN), so
+      # it does not get the same trust-the-tag convenience as `verify`/
+      # `commitlint`. The version comment is what a `dependabot` bump changes;
+      # re-verify the SHA against the tag before accepting one.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # The published version is the tag, not a file this repo tracks. Set
+      # only in the job's own checkout — nothing is committed back.
+      - name: Set the published version from the tag
+        run: npm pkg set version="${GITHUB_REF_NAME#v}" --prefix apps/agentd
+
+      - run: pnpm --filter @pi-cmux/agentd run bundle
+
+      # Smoke-test the exact artifact about to be published, not a proxy for
+      # it — same command a release runbook or a local check would run.
+      - run: pnpm --filter @pi-cmux/agentd run verify
+
+      - run: pnpm --filter @pi-cmux/agentd publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

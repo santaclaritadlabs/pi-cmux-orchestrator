@@ -6,6 +6,7 @@ import tseslint from "typescript-eslint";
 export default defineConfig([
   globalIgnores([
     "**/dist/**",
+    "apps/agentd/bundle/**",
     "**/node_modules/**",
     "**/*.d.ts",
     "fixtures/**",
@@ -22,7 +23,10 @@ export default defineConfig([
     ],
 
     languageOptions: {
-      parserOptions: { projectService: true },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
 
     rules: {
@@ -117,7 +121,10 @@ export default defineConfig([
   // mistakes, but they are not part of a TypeScript project, so type-aware
   // rules cannot run on them.
   {
-    files: ["**/*.js"],
+    files: ["**/*.js", "**/*.mjs"],
     extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: { console: "readonly", process: "readonly" },
+    },
   },
 ]);

@@ -100,12 +100,67 @@ type Rule = Readonly<{
 const RULES: readonly Rule[] = [
   {
     name: "worker.kind-supported",
-    evaluate: (task) =>
-      // P1 executes only the fake worker. A real provider adapter arriving
-      // without a policy review must not simply start working.
-      task.worker.kind === "fake"
+    evaluate: (task) => {
+      // Only reviewed, first-party adapters are admitted. P5 reviewed and
+      // live-verified claude, cursor, and antigravity against their real
+      // CLIs (2026-08-08) alongside codex and fake, so all five are enabled.
+      // The type already makes `task.worker.kind` a closed union, but this
+      // stays a genuine runtime check rather than relying on the compiler
+      // alone — the same reasoning as `constraints.no-push` below: a task
+      // reaching the engine through a cast or a stale schema must still be
+      // refused if its kind is ever outside the reviewed set.
+      const kind: string = task.worker.kind;
+      const reviewed: ReadonlySet<string> = new Set([
+        "fake",
+        "codex",
+        "claude",
+        "cursor",
+        "antigravity",
+      ]);
+      return reviewed.has(kind)
         ? undefined
-        : `worker kind '${task.worker.kind}' is not enabled in this phase`,
+        : `worker kind '${kind}' is not enabled in this phase`;
+    },
+  },
+  {
+    name: "worker.kind-requires-sandbox",
+    evaluate: (task) => {
+      // These three run a real, unmodified provider CLI with real host
+      // access — including, for Antigravity with `mayWrite`, a flag that
+      // disables its own permission prompts. `HostSandboxProvider` (P2) is
+      // today the *only* registered `SandboxProvider`, and it declares no
+      // isolation capability at all, so `"required"` cannot yet be
+      // satisfied and `"none"` would skip even the degraded path — either
+      // way the CLI runs directly against the host.
+      //
+      // ADR 0011 records the accepted MVP exception: `"preferred"` is
+      // admitted for these three kinds even though `sandboxAvailable` is
+      // always false today, because `SandboxRegistry` already reports that
+      // combination as `degraded` and logs it — every run is an audited,
+      // visible fact, not a silent fallback. `"none"` stays refused because
+      // it would suppress that record. There is still no repository-trust
+      // model to tell "untrusted" apart from "trusted", so this exception
+      // applies to every repository, which is exactly what ADR 0011 accepts
+      // and time-bounds until a real isolating provider lands.
+      //
+      // This rule is self-removing, not a permanent gate: the day a real
+      // isolating `SandboxProvider` is registered, `"preferred"` stops being
+      // degraded and `"required"` starts being satisfiable for these kinds
+      // without this rule changing at all. `fake` and `codex` are
+      // deliberately not included — `fake` is a Node test harness with no
+      // host reach, and codex's exposure predates this review and is
+      // unchanged by it.
+      const gated: ReadonlySet<string> = new Set([
+        "claude",
+        "cursor",
+        "antigravity",
+      ]);
+      const admitted: ReadonlySet<string> = new Set(["required", "preferred"]);
+      return gated.has(task.worker.kind) &&
+        !admitted.has(task.constraints.sandbox)
+        ? `worker kind '${task.worker.kind}' requires sandbox: "required" or "preferred" (ADR 0011) until a real isolating provider exists`
+        : undefined;
+    },
   },
   {
     name: "constraints.no-push",

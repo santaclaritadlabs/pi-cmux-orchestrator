@@ -63,6 +63,14 @@ export type SandboxRequest = Readonly<{
   extraDeniedPaths?: readonly string[];
   /** Home directory to resolve the denylist against. Defaults to the real one. */
   home?: string;
+  /**
+   * The worker's `HOME` for this run — required, never optional, so no
+   * caller can fall back to the operator's real `HOME` by omission. Isolated
+   * per worker kind and persistent across runs, so a worker's own login
+   * mechanism (`claude login`, an OAuth keychain, session files under its
+   * config dir) survives between tasks without ever seeing the operator's.
+   */
+  workerHome: string;
 }>;
 
 /**

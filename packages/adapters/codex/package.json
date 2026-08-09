@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@pi-cmux/observability": "workspace:*",
+    "@pi-cmux/process-supervisor": "workspace:*",
     "@pi-cmux/protocol": "workspace:*",
     "zod": "4.4.3"
   },

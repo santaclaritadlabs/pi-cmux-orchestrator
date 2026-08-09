@@ -11,14 +11,18 @@
  * `SUCCEEDED`. CLAUDE.md: "Do not accept a worker claim of success as proof."
  */
 
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  DEFAULT_EVENT_PAGE_SIZE,
   PROTOCOL_VERSION,
   err,
+  fromThrown,
   makeError,
   ok,
   parseAgentTask,
+  tryCatchAsync,
   type AgentEvent,
   type AgentResult,
   type AgentTask,
@@ -36,10 +40,30 @@ import {
   type PolicyProfile,
 } from "@pi-cmux/policy";
 import {
+  capabilities as fakeCapabilities,
   readEvents as readWorkerEvents,
   start as startWorker,
-  type RunHandle,
 } from "@pi-cmux/adapter-fake";
+import {
+  capabilities as codexCapabilities,
+  readEvents as readCodexEvents,
+  start as startCodexWorker,
+} from "@pi-cmux/adapter-codex";
+import {
+  capabilities as claudeCapabilities,
+  readEvents as readClaudeEvents,
+  start as startClaudeWorker,
+} from "@pi-cmux/adapter-claude";
+import {
+  capabilities as cursorCapabilities,
+  readEvents as readCursorEvents,
+  start as startCursorWorker,
+} from "@pi-cmux/adapter-cursor";
+import {
+  capabilities as antigravityCapabilities,
+  readEvents as readAntigravityEvents,
+  start as startAntigravityWorker,
+} from "@pi-cmux/adapter-antigravity";
 import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
 import type { SandboxPlacement, SandboxRegistry } from "@pi-cmux/sandbox";
 import type { WorktreeManager } from "@pi-cmux/worktrees";
@@ -47,12 +71,111 @@ import type { WorktreeManager } from "@pi-cmux/worktrees";
 import { processOwner } from "./daemon-lock.ts";
 import type { RepositoryRegistry } from "./repositories.ts";
 
+/** Provider-neutral process contract consumed by the execution supervisor. */
+type RunHandle = Readonly<{
+  runId: string;
+  taskId: string;
+  pid: number;
+  startedAtMs: number;
+  cancel: () => void;
+  completed: Promise<ProcessOutcome>;
+}>;
+
+/** Static provider declaration exposed through agentd's public RPC surface. */
+export type WorkerCapabilities = Readonly<{
+  kind: AgentTask["worker"]["kind"];
+  supportsGracefulCancel: boolean;
+  supportsStructuredOutput: boolean;
+  eventTypes: readonly AgentEvent["type"][];
+}>;
+
+/**
+ * Every reviewed adapter's static capability declaration, keyed by kind.
+ *
+ * These never change at runtime — no process is spawned to compute them —
+ * so this is safe to call before a task exists, unlike everything else on
+ * `Orchestrator`. `worker.kind-supported` in `@pi-cmux/policy` is the
+ * separate, authoritative gate on which kinds a task may actually request;
+ * this list exists so a caller can discover what each one supports without
+ * first submitting a task and reading the denial.
+ */
+function allWorkerCapabilities(): readonly WorkerCapabilities[] {
+  return [
+    fakeCapabilities(),
+    codexCapabilities(),
+    claudeCapabilities(),
+    cursorCapabilities(),
+    antigravityCapabilities(),
+  ];
+}
+
+type WorkerStartArgs = Parameters<typeof startWorker>[0];
+type WorkerStartOptions = Readonly<{
+  workerArgs?: readonly string[];
+  logger?: Logger;
+}>;
+
+type WorkerBatch = Readonly<{
+  events: readonly AgentEvent[];
+  results: readonly AgentResult[];
+  rejected: number;
+  offset: number;
+}>;
+
+async function readSelectedWorkerEvents(
+  task: AgentTask,
+  runId: string,
+  stdoutPath: string,
+  offset: number,
+): Promise<Result<WorkerBatch, AgentdError>> {
+  const options = { atEof: true, taskId: task.taskId, runId };
+  switch (task.worker.kind) {
+    case "codex":
+      return await readCodexEvents(stdoutPath, offset, options);
+    case "claude":
+      return await readClaudeEvents(stdoutPath, offset, options);
+    case "cursor":
+      return await readCursorEvents(stdoutPath, offset, options);
+    case "antigravity":
+      return await readAntigravityEvents(stdoutPath, offset, options);
+    case "fake":
+      return await readWorkerEvents(stdoutPath, offset, { atEof: true });
+  }
+}
+
+async function startSelectedWorker(
+  task: AgentTask,
+  args: WorkerStartArgs,
+  options: WorkerStartOptions,
+): Promise<Result<RunHandle, AgentdError>> {
+  const adapterOptions =
+    options.logger === undefined ? {} : { logger: options.logger };
+  switch (task.worker.kind) {
+    case "codex":
+      return await startCodexWorker(args, adapterOptions);
+    case "claude":
+      return await startClaudeWorker(args, adapterOptions);
+    case "cursor":
+      return await startCursorWorker(args, adapterOptions);
+    case "antigravity":
+      return await startAntigravityWorker(args, adapterOptions);
+    case "fake":
+      return await startWorker(args, options);
+  }
+}
+
 export type OrchestratorOptions = Readonly<{
   store: RunStore;
   /** The repositories this daemon is configured to touch. */
   repositories: RepositoryRegistry;
   worktrees: WorktreeManager;
   sandbox: SandboxRegistry;
+  /**
+   * Root for every worker's isolated, persistent `HOME` — required, not
+   * optional, so a missing value cannot silently fall back to the real
+   * operator `HOME`. See `DaemonPaths.workerHomeRoot`.
+   */
+  workerHomeRoot: string;
   logger?: Logger;
   now?: () => Date;
   /** Flags for the fake worker; how a test selects a failure mode. */
@@ -74,6 +197,7 @@ export class Orchestrator {
   readonly #repositories: RepositoryRegistry;
   readonly #worktrees: WorktreeManager;
   readonly #sandbox: SandboxRegistry;
+  readonly #workerHomeRoot: string;
   readonly #logger: Logger;
   readonly #now: () => Date;
   readonly #workerArgs: readonly string[];
@@ -111,6 +235,7 @@ export class Orchestrator {
     this.#repositories = options.repositories;
     this.#worktrees = options.worktrees;
     this.#sandbox = options.sandbox;
+    this.#workerHomeRoot = options.workerHomeRoot;
     this.#logger = (options.logger ?? nullLogger).child({
       component: "orchestrator",
     });
@@ -323,7 +448,8 @@ export class Orchestrator {
     }
 
     const directory = this.#store.runDirectory(runId);
-    const handle = await startWorker(
+    const handle = await startSelectedWorker(
+      task.value,
       {
         task: task.value,
         runId,
@@ -434,6 +560,23 @@ export class Orchestrator {
     });
     if (!provisioned.ok) return provisioned;
 
+    // Lazy, per-kind: mirrors WorktreeManager's own root, created on first use
+    // rather than eagerly at boot for every kind agentd merely knows about.
+    const workerHome = path.join(this.#workerHomeRoot, task.worker.kind);
+    const workerHomePrepared = await tryCatchAsync(
+      async () => {
+        await mkdir(workerHome, { recursive: true, mode: 0o700 });
+        return undefined;
+      },
+      (cause) =>
+        fromThrown(
+          "STORE_IO_FAILED",
+          "could not create the worker's isolated home directory",
+          cause,
+        ),
+    );
+    if (!workerHomePrepared.ok) return workerHomePrepared;
+
     const placement = await this.#sandbox.prepare(task.constraints.sandbox, {
       runId,
       taskId: task.taskId,
@@ -441,6 +584,7 @@ export class Orchestrator {
       allowedPaths: task.constraints.allowedPaths,
       network: task.constraints.network,
       networkAllowlist: task.constraints.networkAllowlist,
+      workerHome,
     });
     if (!placement.ok) return placement;
 
@@ -629,10 +773,11 @@ export class Orchestrator {
     const offset = metadata.ok ? metadata.value.stdoutOffset : 0;
 
     // The worker has exited, so the trailing fragment may now be taken.
-    const batch = await readWorkerEvents(
+    const batch = await readSelectedWorkerEvents(
+      task,
+      runId,
       path.join(directory, "stdout.ndjson"),
       offset,
-      { atEof: true },
     );
 
     if (batch.ok) {
@@ -923,8 +1068,9 @@ export class Orchestrator {
   public async events(
     runId: string,
     sinceSequence = -1,
+    limit = DEFAULT_EVENT_PAGE_SIZE,
   ): Promise<Result<AgentEvent[], AgentdError>> {
-    return await this.#store.readEvents(runId, sinceSequence);
+    return await this.#store.readEvents(runId, sinceSequence, limit);
   }
 
   /**
@@ -970,5 +1116,9 @@ export class Orchestrator {
 
   public liveRunIds(): readonly string[] {
     return [...this.#running.keys()];
+  }
+
+  public workerCapabilities(): readonly WorkerCapabilities[] {
+    return allWorkerCapabilities();
   }
 }
