@@ -101,9 +101,9 @@ const RULES: readonly Rule[] = [
   {
     name: "worker.kind-supported",
     evaluate: (task) =>
-      // P1 executes only the fake worker. A real provider adapter arriving
-      // without a policy review must not simply start working.
-      task.worker.kind === "fake"
+      // Only reviewed, first-party adapters are admitted. New provider kinds
+      // remain denied until their policy review explicitly enables them.
+      task.worker.kind === "fake" || task.worker.kind === "codex"
         ? undefined
         : `worker kind '${task.worker.kind}' is not enabled in this phase`,
   },

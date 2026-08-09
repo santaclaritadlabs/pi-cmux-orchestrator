@@ -38,14 +38,64 @@ import {
 import {
   readEvents as readWorkerEvents,
   start as startWorker,
-  type RunHandle,
+  type RunHandle as FakeRunHandle,
 } from "@pi-cmux/adapter-fake";
+import {
+  readEvents as readCodexEvents,
+  start as startCodexWorker,
+  type RunHandle as CodexRunHandle,
+} from "@pi-cmux/adapter-codex";
 import type { ProcessOutcome } from "@pi-cmux/process-supervisor";
 import type { SandboxPlacement, SandboxRegistry } from "@pi-cmux/sandbox";
 import type { WorktreeManager } from "@pi-cmux/worktrees";
 
 import { processOwner } from "./daemon-lock.ts";
 import type { RepositoryRegistry } from "./repositories.ts";
+
+type RunHandle = FakeRunHandle | CodexRunHandle;
+
+type WorkerStartArgs = Parameters<typeof startWorker>[0];
+type WorkerStartOptions = Readonly<{
+  workerArgs?: readonly string[];
+  logger?: Logger;
+}>;
+
+type WorkerBatch = Readonly<{
+  events: readonly AgentEvent[];
+  results: readonly AgentResult[];
+  rejected: number;
+  offset: number;
+}>;
+
+async function readSelectedWorkerEvents(
+  task: AgentTask,
+  runId: string,
+  stdoutPath: string,
+  offset: number,
+): Promise<Result<WorkerBatch, AgentdError>> {
+  if (task.worker.kind === "codex") {
+    return await readCodexEvents(stdoutPath, offset, {
+      atEof: true,
+      taskId: task.taskId,
+      runId,
+    });
+  }
+  return await readWorkerEvents(stdoutPath, offset, { atEof: true });
+}
+
+async function startSelectedWorker(
+  task: AgentTask,
+  args: WorkerStartArgs,
+  options: WorkerStartOptions,
+): Promise<Result<RunHandle, AgentdError>> {
+  if (task.worker.kind === "codex") {
+    return await startCodexWorker(
+      args,
+      options.logger === undefined ? {} : { logger: options.logger },
+    );
+  }
+  return await startWorker(args, options);
+}
 
 export type OrchestratorOptions = Readonly<{
   store: RunStore;
@@ -323,7 +373,8 @@ export class Orchestrator {
     }
 
     const directory = this.#store.runDirectory(runId);
-    const handle = await startWorker(
+    const handle = await startSelectedWorker(
+      task.value,
       {
         task: task.value,
         runId,
@@ -629,10 +680,11 @@ export class Orchestrator {
     const offset = metadata.ok ? metadata.value.stdoutOffset : 0;
 
     // The worker has exited, so the trailing fragment may now be taken.
-    const batch = await readWorkerEvents(
+    const batch = await readSelectedWorkerEvents(
+      task,
+      runId,
       path.join(directory, "stdout.ndjson"),
       offset,
-      { atEof: true },
     );
 
     if (batch.ok) {

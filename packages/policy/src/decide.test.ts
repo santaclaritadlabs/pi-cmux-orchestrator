@@ -44,16 +44,14 @@ describe("the default is deny", () => {
     assert.equal(decision.value.allowed, true);
   });
 
-  it("names the rule that denied, not just that something did", async () => {
+  it("admits the Codex worker once the P3 adapter is enabled", async () => {
     await using dir = await temporaryDirectory();
     const task = await taskIn(dir.path, {
       worker: { kind: "codex", profile: "default" },
     });
 
     const decision = await decide(task);
-    assert.equal(decision.ok, false);
-    assert.equal(decision.error.code, "POLICY_DENIED");
-    assert.equal(decision.error.details?.["rule"], "worker.kind-supported");
+    assert.equal(decision.ok, true);
   });
 
   it("is never retryable — a denial must not be beatable by looping", async () => {

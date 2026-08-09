@@ -1,25 +1,25 @@
 {
-  "name": "@pi-cmux/adapter-codex",
+  "name": "@pi-cmux/pi-extension",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Codex CLI protocol normalization for agentd.",
+  "description": "First-party Pi bridge to the local agentd RPC socket.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
     }
   },
   "scripts": {
     "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
   },
   "dependencies": {
-    "@pi-cmux/observability": "workspace:*",
-    "@pi-cmux/process-supervisor": "workspace:*",
+    "@pi-cmux/agentd": "workspace:*",
     "@pi-cmux/protocol": "workspace:*",
     "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@pi-cmux/testkit": "workspace:*"
   }
 }

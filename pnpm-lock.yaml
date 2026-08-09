@@ -38,6 +38,9 @@ importers:
 
   apps/agentd:
     dependencies:
+      '@pi-cmux/adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapters/codex
       '@pi-cmux/adapter-fake':
         specifier: workspace:*
         version: link:../../packages/adapters/fake
@@ -69,21 +72,32 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  apps/pi-extension:
+    dependencies:
+      '@pi-cmux/agentd':
+        specifier: workspace:*
+        version: link:../agentd
+      '@pi-cmux/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
   packages/adapters/codex:
     dependencies:
       '@pi-cmux/observability':
         specifier: workspace:*
         version: link:../../observability
+      '@pi-cmux/process-supervisor':
+        specifier: workspace:*
+        version: link:../../process-supervisor
       '@pi-cmux/protocol':
         specifier: workspace:*
         version: link:../../protocol
       zod:
         specifier: 4.4.3
         version: 4.4.3
-    devDependencies:
-      '@pi-cmux/testkit':
-        specifier: workspace:*
-        version: link:../../testkit
 
   packages/adapters/fake:
     dependencies:

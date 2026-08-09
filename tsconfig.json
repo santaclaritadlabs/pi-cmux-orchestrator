@@ -35,6 +35,9 @@
     },
     {
       "path": "./apps/agentd"
+    },
+    {
+      "path": "./apps/pi-extension"
     }
   ]
 }
