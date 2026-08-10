@@ -28,6 +28,34 @@ pnpm build
 pnpm --filter @pi-cmux/pi-extension test
 ```
 
+## Install into Pi
+
+From the repository root, the installer runs the workspace install, waits for it
+to finish, runs the build, waits for it to finish, and only then writes a small
+loader into Pi's global extension directory:
+
+```bash
+pnpm install:pi-extension
+```
+
+The default destination is `~/.pi/agent/extensions`. A custom extension
+directory can be selected explicitly:
+
+```bash
+pnpm install:pi-extension -- --target "$HOME/.config/pi/extensions"
+```
+
+`PI_EXTENSION_DIR` is also accepted. The generated
+`pi-cmux-orchestrator.js` is a pointer to this checkout's compiled
+`apps/pi-extension/dist/pi-entry.js`; keep the checkout in place after
+installation. The loader executes code from that checkout, so only install from
+a trusted repository. Pi auto-discovers the default directory. For a custom directory,
+add the generated loader path to the `extensions` array in Pi's
+`~/.pi/agent/settings.json`, or load it once with `pi -e <loader-path>`.
+
+The loader connects to the daemon's default socket and token paths. Set
+`AGENTD_SOCKET_PATH` or `AGENTD_TOKEN_PATH` when the daemon uses custom paths.
+
 ## Use in a Pi extension host
 
 Import the bridge and command registration helpers:
