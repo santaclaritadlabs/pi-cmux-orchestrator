@@ -58,6 +58,18 @@ async function startHarness(
   const repository = await createFixtureRepository(path.join(root, "repo"));
 
   const paths = resolveDaemonPaths({ runtimeDir, stateDir });
+
+  // Same check `commandStart` runs in production: a socket path over
+  // `sun_path` fails here with a clear message, instead of `startServer`
+  // hitting `EADDRINUSE` from `listen` — macOS's misleading errno for an
+  // oversized path — which `assert.ok(server.ok, ...)` below would otherwise
+  // swallow silently.
+  const prepared = await prepareDaemonDirectories(paths);
+  assert.ok(
+    prepared.ok,
+    `directories must prepare: ${prepared.ok ? "" : JSON.stringify(prepared.error)}`,
+  );
+
   const store = new RunStore({ root: stateDir });
   const orchestrator = new Orchestrator({
     store,
@@ -71,7 +83,10 @@ async function startHarness(
   });
 
   const server = await startServer({ paths, orchestrator, token: TEST_TOKEN });
-  assert.ok(server.ok, "the server must start");
+  assert.ok(
+    server.ok,
+    `the server must start: ${server.ok ? "" : JSON.stringify(server.error)}`,
+  );
 
   return {
     server: server.value,
@@ -204,6 +219,39 @@ describe("socket and directory permissions", () => {
     );
     assert.equal(prepared.ok, false);
     assert.match(prepared.error.safeMessage, /too long/);
+  });
+
+  it("lets AGENTD_RUNTIME_DIR/AGENTD_STATE_DIR relocate a too-long default", async () => {
+    // Regression for a real user whose $HOME is long enough to push the
+    // default socket path over sun_path: resolveDaemonPaths() with no
+    // explicit options must still be escapable via environment override,
+    // not just via the options object tests use directly.
+    await using dir = await temporaryDirectory();
+    const shortRuntime = path.join(dir.path, "r");
+    const shortState = path.join(dir.path, "s");
+
+    const previousRuntime = process.env["AGENTD_RUNTIME_DIR"];
+    const previousState = process.env["AGENTD_STATE_DIR"];
+    process.env["AGENTD_RUNTIME_DIR"] = shortRuntime;
+    process.env["AGENTD_STATE_DIR"] = shortState;
+    try {
+      const paths = resolveDaemonPaths();
+      assert.equal(paths.runtimeDir, shortRuntime);
+      assert.equal(paths.stateDir, shortState);
+      assert.equal(paths.socketPath, path.join(shortRuntime, "pi-agentd.sock"));
+
+      const prepared = await prepareDaemonDirectories(paths);
+      assert.ok(
+        prepared.ok,
+        `directories must prepare: ${prepared.ok ? "" : JSON.stringify(prepared.error)}`,
+      );
+    } finally {
+      if (previousRuntime === undefined)
+        delete process.env["AGENTD_RUNTIME_DIR"];
+      else process.env["AGENTD_RUNTIME_DIR"] = previousRuntime;
+      if (previousState === undefined) delete process.env["AGENTD_STATE_DIR"];
+      else process.env["AGENTD_STATE_DIR"] = previousState;
+    }
   });
 });
 

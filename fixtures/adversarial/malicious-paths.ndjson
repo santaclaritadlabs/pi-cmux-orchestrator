@@ -1,0 +1,4 @@
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":0,"timestamp":"2026-08-08T05:00:00.000Z","type":"status","payload":{"state":"RUNNING"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":1,"timestamp":"2026-08-08T05:00:01.000Z","type":"tool","payload":{"phase":"started","callId":"path-1","tool":"file_change","path":"../../../etc/passwd"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":2,"timestamp":"2026-08-08T05:00:02.000Z","type":"artifact","payload":{"name":"escape","path":"worktree/../../.ssh/id_rsa","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000001"}}
+{"protocolVersion":"1","taskId":"AUTH-41","runId":"run_01JQZX3K5T7V9B2N4M6P8R0AWC","sequence":3,"timestamp":"2026-08-08T05:00:03.000Z","type":"log","payload":{"level":"warn","message":"probe symlink: node_modules/.bin/evil -> /etc/passwd"}}

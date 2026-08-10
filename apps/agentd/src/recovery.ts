@@ -86,6 +86,12 @@ export type RecoveryOptions = Readonly<{
   terminationGraceMs?: number;
   /** Test seam, so the grace period costs no real time. */
   sleep?: (ms: number) => Promise<void>;
+  /** Test seam for workers that ignore SIGTERM/SIGKILL. */
+  stopSurvivingWorker?: (
+    pid: number,
+    graceMs: number,
+    sleep: (ms: number) => Promise<void>,
+  ) => Promise<boolean>;
 }>;
 
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
@@ -98,7 +104,7 @@ const TERMINATION_POLL_MS = 100;
  * polling `pidExists` rather than a child exit event: we are not this
  * process's parent, so there is no exit event to wait for.
  */
-async function stopSurvivingWorker(
+async function defaultStopSurvivingWorker(
   pid: number,
   graceMs: number,
   sleep: (ms: number) => Promise<void>,
@@ -137,6 +143,7 @@ export async function recoverRuns(
     (async (ms: number): Promise<void> => {
       await new Promise<void>((resolve) => setTimeout(resolve, ms));
     });
+  const stopWorker = options.stopSurvivingWorker ?? defaultStopSurvivingWorker;
 
   const listed = await store.listRunIds();
   if (!listed.ok) {
@@ -231,7 +238,7 @@ export async function recoverRuns(
       // the worker is stopped rather than left to run unbounded. See the note
       // at the top of this file.
       logger.warn("stopping a worker that outlived its daemon", { runId, pid });
-      const stopped = await stopSurvivingWorker(pid, graceMs, sleep);
+      const stopped = await stopWorker(pid, graceMs, sleep);
       terminated.push({ runId, pid, stopped });
 
       if (!stopped) {

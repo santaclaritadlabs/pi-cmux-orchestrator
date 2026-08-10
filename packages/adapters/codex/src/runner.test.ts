@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
-import { temporaryDirectory } from "@pi-cmux/testkit";
+import {
+  assertSurvivesAdversarialCorpus,
+  providerAdversarialFixtures,
+  temporaryDirectory,
+} from "@pi-cmux/testkit";
 
 import {
   normalizeStream,
@@ -24,12 +28,22 @@ function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
   };
 }
 
+function taskInWorktree(
+  worktreePath: string,
+  overrides: Partial<AgentTask> = {},
+): AgentTask {
+  return taskWith({
+    workspace: { ...sampleTask().workspace, worktreePath },
+    ...overrides,
+  });
+}
+
 const startArgsWithoutEnv = {
-  task: taskWith(),
+  task: taskInWorktree("/tmp/worktree"),
   runId: RUN_ID,
   stdoutPath: "/tmp/stdout.ndjson",
   stderrPath: "/tmp/stderr.log",
-  cwd: "/tmp",
+  cwd: "/tmp/worktree",
 };
 
 // @ts-expect-error StartArgs requires the sandbox-provided environment.
@@ -61,7 +75,7 @@ describe("Codex runner", () => {
     const worker = await writeWorker(dir.path);
     const argsFile = path.join(dir.path, "args.json");
     const stdoutPath = path.join(dir.path, "stdout.ndjson");
-    const task = taskWith({
+    const task = taskInWorktree(dir.path, {
       objective: "inspect; do not execute shell",
       constraints: {
         ...sampleTask().constraints,
@@ -110,7 +124,7 @@ describe("Codex runner", () => {
     await using dir = await temporaryDirectory();
     const worker = await writeWorker(dir.path);
     const argsFile = path.join(dir.path, "args.json");
-    const task = taskWith({
+    const task = taskInWorktree(dir.path, {
       constraints: { ...sampleTask().constraints, mayWrite: true },
     });
     const handle = await start(
@@ -140,7 +154,7 @@ describe("Codex runner", () => {
   it("cancels a running process through the supervisor", async () => {
     await using dir = await temporaryDirectory();
     const worker = await writeWorker(dir.path);
-    const task = taskWith();
+    const task = taskInWorktree(dir.path);
     const handle = await start(
       {
         task,
@@ -156,6 +170,95 @@ describe("Codex runner", () => {
     handle.value.cancel();
     const outcome = await handle.value.completed;
     assert.equal(outcome.reason, "cancelled");
+  });
+});
+
+describe("adversarial corpus (Task 8)", () => {
+  const streamOptions = {
+    taskId: sampleTask().taskId,
+    runId: RUN_ID,
+  };
+
+  it("survives hardened provider fixtures through normalizeStream", async () => {
+    await assertSurvivesAdversarialCorpus(
+      (raw) => normalizeStream(raw, streamOptions),
+      providerAdversarialFixtures("codex"),
+      { hardened: true },
+    );
+  });
+
+  it("rejects a cwd outside the assigned worktree before spawning", async () => {
+    await using dir = await temporaryDirectory();
+    const worktree = path.join(dir.path, "worktree");
+    const outside = path.join(dir.path, "outside");
+    await mkdir(worktree, { recursive: true });
+    await mkdir(outside, { recursive: true });
+
+    const handle = await start(
+      {
+        task: taskInWorktree(worktree),
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: outside,
+        env: { PATH: FIXTURE_PATH },
+      },
+      { command: process.execPath },
+    );
+
+    assert.equal(handle.ok, false);
+    assert.equal(handle.error.code, "PATH_ESCAPE");
+  });
+
+  it("rejects a cwd that resolves outside the worktree via symlink", async () => {
+    await using dir = await temporaryDirectory();
+    const worktree = path.join(dir.path, "worktree");
+    const outside = path.join(dir.path, "outside");
+    await mkdir(worktree, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await symlink(outside, path.join(worktree, "escape"));
+
+    const handle = await start(
+      {
+        task: taskInWorktree(worktree),
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: path.join(worktree, "escape"),
+        env: { PATH: FIXTURE_PATH },
+      },
+      { command: process.execPath },
+    );
+
+    assert.equal(handle.ok, false);
+    assert.equal(handle.error.code, "PATH_ESCAPE");
+  });
+
+  it("terminates a hung worker at the hard timeout", async () => {
+    await using dir = await temporaryDirectory();
+    const worker = await writeWorker(dir.path);
+    const worktree = path.join(dir.path, "worktree");
+    await mkdir(worktree, { recursive: true });
+    const task = taskInWorktree(worktree, {
+      limits: { softTimeoutMs: 50, hardTimeoutMs: 200 },
+    });
+
+    const handle = await start(
+      {
+        task,
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: worktree,
+        env: { HANG: "1", PATH: FIXTURE_PATH },
+      },
+      { command: worker, supervisor: { terminationGraceMs: 200 } },
+    );
+    assert.ok(handle.ok);
+    const outcome = await handle.value.completed;
+    assert.equal(outcome.reason, "timed_out");
+    assert.equal(outcome.exitCode, null);
+    assert.equal(outcome.softTimeoutElapsed, true);
   });
 });
 

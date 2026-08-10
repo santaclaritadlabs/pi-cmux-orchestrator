@@ -9,4 +9,5 @@
 export * from "./harness.ts";
 export * from "./replay-options.ts";
 export * from "./fixtures.ts";
+export * from "./adversarial.ts";
 export * from "./git-fixture.ts";

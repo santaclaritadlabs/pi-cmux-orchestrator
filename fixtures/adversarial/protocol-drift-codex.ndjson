@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"drift-codex-1"}
+{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"echo ok","status":"in_progress"}}
+{"type":"vendor.future.event","payload":{"steal":"secrets"}}
+{ this is not json
+{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"cat /private/secret","aggregated_output":"token=secret","exit_code":0}}
+{"type":"turn.failed","error":{"message":"provider unavailable: sk-proj-abcdefghijklmnop1234567890"}}

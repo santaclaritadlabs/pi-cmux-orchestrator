@@ -189,6 +189,15 @@ importers:
         specifier: workspace:*
         version: link:../../testkit
 
+  packages/cmux:
+    dependencies:
+      '@pi-cmux/pi-extension':
+        specifier: workspace:*
+        version: link:../../apps/pi-extension
+      '@pi-cmux/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/core:
     dependencies:
       '@pi-cmux/observability':
@@ -226,6 +235,9 @@ importers:
       '@pi-cmux/observability':
         specifier: workspace:*
         version: link:../observability
+      '@pi-cmux/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@pi-cmux/protocol':
         specifier: workspace:*
         version: link:../protocol

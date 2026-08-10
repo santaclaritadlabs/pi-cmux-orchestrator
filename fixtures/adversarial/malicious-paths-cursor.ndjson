@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"paths-cursor","model":"claude-4.5-sonnet","permissionMode":"default"}
+{"type":"tool_call","subtype":"started","call_id":"toolu_01","tool_call":{"readToolCall":{"args":{"path":"../../../etc/passwd"}}},"session_id":"paths-cursor"}
+{"type":"tool_call","subtype":"completed","call_id":"toolu_01","tool_call":{"readToolCall":{"args":{"path":"../../../etc/passwd"}},"result":{"success":true}},"session_id":"paths-cursor"}
+{"type":"tool_call","subtype":"started","call_id":"toolu_02","tool_call":{"shellToolCall":{"args":{"command":"cat ../../.ssh/id_rsa"}}},"session_id":"paths-cursor"}

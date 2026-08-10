@@ -33,6 +33,17 @@ export type CmuxStatusSink = Readonly<{
 export type CmuxConsumerOptions = Readonly<{
   intervalMs?: number;
   signal?: AbortSignal;
+  /**
+   * Called when a single `publish` fails; the watch loop keeps polling.
+   *
+   * cmux is the visual plane and must never be a required dependency (see
+   * CLAUDE.md): a transient sink failure (socket restart, cmux CLI down for a
+   * moment) must not halt status projection for the rest of the run, which is
+   * what `bridge.watch` would otherwise do — it stops on the first `onSnapshot`
+   * rejection. Opt-in rather than a bundled logger, since this package must
+   * not carry an observability dependency of its own.
+   */
+  onPublishError?: (error: unknown) => void;
 }>;
 
 /**
@@ -64,11 +75,15 @@ export class CmuxStatusConsumer {
         : { intervalMs: options.intervalMs }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       onSnapshot: async (snapshot) => {
-        await this.sink.publish({
-          runId,
-          text: formatStatus(snapshot),
-          snapshot,
-        });
+        try {
+          await this.sink.publish({
+            runId,
+            text: formatStatus(snapshot),
+            snapshot,
+          });
+        } catch (cause) {
+          options.onPublishError?.(cause);
+        }
       },
     };
     return await this.bridge.watch(runId, watchOptions);

@@ -4,6 +4,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../protocol" },
+    { "path": "../policy" },
     { "path": "../observability" },
     { "path": "../testkit" }
   ]

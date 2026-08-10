@@ -102,5 +102,7 @@ of failure.
   its own is not decided here. Nothing today consumes it outside this
   workspace; if that changes, publishing it is additive and does not revisit
   this ADR.
-- The first tag, and whether `pi-extension` is ever part of a release, are
-  operational decisions for whoever cuts it, not architectural ones.
+- Whether `pi-extension` is ever part of a release was an operational question
+  at the time of this ADR; it is now decided in
+  [`docs/adr/0012-pi-extension-distribution.md`](0012-pi-extension-distribution.md)
+  (workspace-internal, not published).

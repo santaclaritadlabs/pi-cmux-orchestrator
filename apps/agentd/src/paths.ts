@@ -1,14 +1,19 @@
 /**
  * Where the daemon keeps its socket, token and state.
  *
- * Two directories, both `0700`, both under the user's home:
+ * Two directories, both `0700`, both under the user's home by default:
  *
  *   `~/.local/run/`        the socket and the auth token (spec §4)
  *   `~/.local/share/pi-agentd/`  durable run state (spec §11)
  *
  * A Unix socket path is limited to about 104 bytes on macOS (`sun_path`), so
  * the path is checked at startup rather than failing later with an opaque
- * `EINVAL` from `bind`.
+ * `EINVAL` from `bind`. A long `$HOME` (a corporate SSO username, a
+ * network-mounted profile) can push the default socket path over that limit
+ * with no way for the affected user to recover, so `AGENTD_RUNTIME_DIR` /
+ * `AGENTD_STATE_DIR` let them relocate both directories to a shorter path —
+ * still explicit, still under their own control, same as `CMUX_SOCKET_PATH`
+ * for the cmux bridge.
  */
 
 import { mkdir, stat } from "node:fs/promises";
@@ -69,9 +74,14 @@ export function resolveDaemonPaths(
   options: { home?: string; runtimeDir?: string; stateDir?: string } = {},
 ): DaemonPaths {
   const home = options.home ?? homedir();
-  const runtimeDir = options.runtimeDir ?? path.join(home, ".local", "run");
+  const runtimeDir =
+    options.runtimeDir ??
+    process.env["AGENTD_RUNTIME_DIR"] ??
+    path.join(home, ".local", "run");
   const stateDir =
-    options.stateDir ?? path.join(home, ".local", "share", "pi-agentd");
+    options.stateDir ??
+    process.env["AGENTD_STATE_DIR"] ??
+    path.join(home, ".local", "share", "pi-agentd");
 
   return {
     runtimeDir,
@@ -102,7 +112,8 @@ export async function prepareDaemonDirectories(
     return err(
       makeError(
         "INTERNAL",
-        "the socket path is too long for a Unix domain socket",
+        "the socket path is too long for a Unix domain socket; set " +
+          "AGENTD_RUNTIME_DIR (and AGENTD_STATE_DIR) to a shorter path and retry",
         { details: { bytes: socketBytes, limit: MAX_SOCKET_PATH_BYTES } },
       ),
     );

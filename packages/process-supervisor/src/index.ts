@@ -8,3 +8,4 @@
 export * from "./environment.ts";
 export * from "./pid-liveness.ts";
 export * from "./supervisor.ts";
+export * from "./worker-placement.ts";
