@@ -30,10 +30,13 @@ The officially supported consumption flow is documented in
 `apps/pi-extension/README.md`:
 
 1. Clone this repository (or use an approved worktree checkout).
-2. Install and build the workspace (`pnpm install`, `pnpm build`).
-3. Point Pi's extension loader at the built `apps/pi-extension/dist` entry (or
-   import `@pi-cmux/pi-extension` from within another first-party extension in
-   the same checkout).
+2. Run `pnpm install:pi-extension`; it runs `pnpm install --frozen-lockfile`,
+   waits for completion, runs `pnpm build`, waits for completion, and then
+   writes a loader into `~/.pi/agent/extensions`.
+3. For a custom extension directory, pass `--target` or `PI_EXTENSION_DIR` and
+   add the generated loader to Pi's `extensions` settings.
+4. Alternatively, import `@pi-cmux/pi-extension` from within another
+   first-party extension in the same checkout.
 
 No additional `@pi-cmux/*` package is published without a new ADR.
 

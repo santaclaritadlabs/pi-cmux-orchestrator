@@ -16,8 +16,9 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "pnpm build && pnpm --recursive --stream test",
+    "test": "pnpm build && node --test scripts/install-pi-extension.test.mjs && pnpm --recursive --stream test",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "install:pi-extension": "node scripts/install-pi-extension.mjs",
     "schemas:emit": "pnpm build && node packages/protocol/dist/emit-schemas.js",
     "fixtures:capture": "pnpm build && node packages/testkit/dist/capture-fixtures.js",
     "hooks:install": "git config core.hooksPath .husky"
