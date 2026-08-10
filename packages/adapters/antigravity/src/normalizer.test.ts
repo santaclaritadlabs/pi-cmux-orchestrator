@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { readFixture } from "@pi-cmux/testkit";
+import {
+  assertSurvivesAdversarialCorpus,
+  providerAdversarialFixtures,
+  readFixture,
+} from "@pi-cmux/testkit";
 
 import {
   AntigravityEventNormalizer,
@@ -163,5 +167,15 @@ describe("AntigravityEventNormalizer", () => {
     const tail = normalizer.finish();
     assert.equal(batch.rejected + tail.rejected, 1);
     assert.equal(batch.events.length + tail.events.length, 0);
+  });
+});
+
+describe("adversarial corpus (Task 11)", () => {
+  it("survives hardened adversarial fixtures", async () => {
+    await assertSurvivesAdversarialCorpus(
+      (raw) => normalizeAntigravityStream(raw, OPTIONS),
+      providerAdversarialFixtures("antigravity"),
+      { hardened: true },
+    );
   });
 });

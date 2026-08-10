@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { sampleTask, type AgentTask } from "@pi-cmux/protocol";
-import { readFixture, temporaryDirectory } from "@pi-cmux/testkit";
+import {
+  assertSurvivesAdversarialCorpus,
+  providerAdversarialFixtures,
+  readFixture,
+  temporaryDirectory,
+} from "@pi-cmux/testkit";
 
-import { readEvents, start, type StartArgs } from "./runner.ts";
+import {
+  normalizeStream,
+  readEvents,
+  start,
+  type StartArgs,
+} from "./runner.ts";
 
 const RUN_ID = "run_01JQZX3K5T7V9B2N4M6P8R0AWC";
-
-const startArgsWithoutEnv = {
-  task: sampleTask(),
-  runId: RUN_ID,
-  stdoutPath: "/tmp/stdout.ndjson",
-  stderrPath: "/tmp/stderr.log",
-  cwd: "/tmp",
-};
-
-// @ts-expect-error StartArgs requires an environment supplied by the sandbox.
-void (startArgsWithoutEnv satisfies StartArgs);
+const NODE_PATH = path.dirname(process.execPath);
 
 function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -28,6 +28,27 @@ function taskWith(overrides: Partial<AgentTask> = {}): AgentTask {
     ...overrides,
   };
 }
+
+function taskInWorktree(
+  worktreePath: string,
+  overrides: Partial<AgentTask> = {},
+): AgentTask {
+  return taskWith({
+    workspace: { ...sampleTask().workspace, worktreePath },
+    ...overrides,
+  });
+}
+
+const startArgsWithoutEnv = {
+  task: taskInWorktree("/tmp/worktree"),
+  runId: RUN_ID,
+  stdoutPath: "/tmp/stdout.ndjson",
+  stderrPath: "/tmp/stderr.log",
+  cwd: "/tmp/worktree",
+};
+
+// @ts-expect-error StartArgs requires an environment supplied by the sandbox.
+void (startArgsWithoutEnv satisfies StartArgs);
 
 async function writeWorker(root: string): Promise<string> {
   const worker = path.join(root, "agy-fixture.mjs");
@@ -38,7 +59,10 @@ async function writeWorker(root: string): Promise<string> {
       "import { writeFileSync } from 'node:fs';",
       "const argsPath = process.env.ARGS_FILE;",
       "if (argsPath) writeFileSync(argsPath, JSON.stringify(process.argv.slice(2)));",
-      "console.log(JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'c1', step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'fixture complete' } }));",
+      "if (process.env.HANG === '1') { setInterval(() => {}, 1000); }",
+      "else {",
+      "  console.log(JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'c1', step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'fixture complete' } }));",
+      "}",
     ].join("\n"),
     "utf8",
   );
@@ -52,7 +76,7 @@ describe("Antigravity runner", () => {
     const worker = await writeWorker(dir.path);
     const argsFile = path.join(dir.path, "args.json");
     const stdoutPath = path.join(dir.path, "stdout.ndjson");
-    const task = taskWith({
+    const task = taskInWorktree(dir.path, {
       objective: "inspect; do not execute shell",
       constraints: { ...sampleTask().constraints, mayWrite: false },
     });
@@ -66,7 +90,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: path.dirname(process.execPath),
+          PATH: NODE_PATH,
         },
       },
       { command: worker },
@@ -98,7 +122,7 @@ describe("Antigravity runner", () => {
     await using dir = await temporaryDirectory();
     const worker = await writeWorker(dir.path);
     const argsFile = path.join(dir.path, "args.json");
-    const task = taskWith({
+    const task = taskInWorktree(dir.path, {
       objective: "make the change",
       constraints: { ...sampleTask().constraints, mayWrite: true },
     });
@@ -112,7 +136,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           ARGS_FILE: argsFile,
-          PATH: path.dirname(process.execPath),
+          PATH: NODE_PATH,
         },
       },
       { command: worker },
@@ -152,7 +176,7 @@ describe("Antigravity runner", () => {
     await chmod(worker, 0o755);
 
     const stdoutPath = path.join(dir.path, "stdout.ndjson");
-    const task = taskWith({ objective: "run pwd" });
+    const task = taskInWorktree(dir.path, { objective: "run pwd" });
 
     const handle = await start(
       {
@@ -163,7 +187,7 @@ describe("Antigravity runner", () => {
         cwd: dir.path,
         env: {
           FIXTURE_CONTENT: raw,
-          PATH: path.dirname(process.execPath),
+          PATH: NODE_PATH,
         },
       },
       { command: worker },
@@ -186,5 +210,94 @@ describe("Antigravity runner", () => {
       batch.value.results[0].failure?.code,
       "WORKER_PERMISSION_DENIED",
     );
+  });
+});
+
+describe("adversarial corpus (Task 11)", () => {
+  const streamOptions = {
+    taskId: sampleTask().taskId,
+    runId: RUN_ID,
+  };
+
+  it("survives hardened provider fixtures through normalizeStream", async () => {
+    await assertSurvivesAdversarialCorpus(
+      (raw) => normalizeStream(raw, streamOptions),
+      providerAdversarialFixtures("antigravity"),
+      { hardened: true },
+    );
+  });
+
+  it("rejects a cwd outside the assigned worktree before spawning", async () => {
+    await using dir = await temporaryDirectory();
+    const worktree = path.join(dir.path, "worktree");
+    const outside = path.join(dir.path, "outside");
+    await mkdir(worktree, { recursive: true });
+    await mkdir(outside, { recursive: true });
+
+    const handle = await start(
+      {
+        task: taskInWorktree(worktree),
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: outside,
+        env: { PATH: NODE_PATH },
+      },
+      { command: process.execPath },
+    );
+
+    assert.equal(handle.ok, false);
+    assert.equal(handle.error.code, "PATH_ESCAPE");
+  });
+
+  it("rejects a cwd that resolves outside the worktree via symlink", async () => {
+    await using dir = await temporaryDirectory();
+    const worktree = path.join(dir.path, "worktree");
+    const outside = path.join(dir.path, "outside");
+    await mkdir(worktree, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await symlink(outside, path.join(worktree, "escape"));
+
+    const handle = await start(
+      {
+        task: taskInWorktree(worktree),
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: path.join(worktree, "escape"),
+        env: { PATH: NODE_PATH },
+      },
+      { command: process.execPath },
+    );
+
+    assert.equal(handle.ok, false);
+    assert.equal(handle.error.code, "PATH_ESCAPE");
+  });
+
+  it("terminates a hung worker at the hard timeout", async () => {
+    await using dir = await temporaryDirectory();
+    const worker = await writeWorker(dir.path);
+    const worktree = path.join(dir.path, "worktree");
+    await mkdir(worktree, { recursive: true });
+    const task = taskInWorktree(worktree, {
+      limits: { softTimeoutMs: 50, hardTimeoutMs: 200 },
+    });
+
+    const handle = await start(
+      {
+        task,
+        runId: RUN_ID,
+        stdoutPath: path.join(dir.path, "stdout.ndjson"),
+        stderrPath: path.join(dir.path, "stderr.log"),
+        cwd: worktree,
+        env: { HANG: "1", PATH: NODE_PATH },
+      },
+      { command: worker, supervisor: { terminationGraceMs: 200 } },
+    );
+    assert.ok(handle.ok);
+    const outcome = await handle.value.completed;
+    assert.equal(outcome.reason, "timed_out");
+    assert.equal(outcome.exitCode, null);
+    assert.equal(outcome.softTimeoutElapsed, true);
   });
 });

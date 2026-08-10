@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"paths-codex-1"}
+{"type":"item.started","item":{"id":"p1","type":"file_change","path":"../../../etc/passwd","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"p2","type":"command_execution","command":"cat ../../.ssh/id_rsa","aggregated_output":"secret-key-material","exit_code":0}}
+{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}

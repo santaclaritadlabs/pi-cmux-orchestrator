@@ -1,7 +1,11 @@
+/// <reference types="node" />
 // @ts-check
 import js from "@eslint/js";
 import { defineConfig, globalIgnores } from "eslint/config";
+import { fileURLToPath, URL } from "node:url";
 import tseslint from "typescript-eslint";
+
+const tsconfigRootDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig([
   globalIgnores([
@@ -25,7 +29,7 @@ export default defineConfig([
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir,
       },
     },
 
@@ -124,7 +128,11 @@ export default defineConfig([
     files: ["**/*.js", "**/*.mjs"],
     extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
     languageOptions: {
-      globals: { console: "readonly", process: "readonly" },
+      globals: {
+        URL: "readonly",
+        console: "readonly",
+        process: "readonly",
+      },
     },
   },
 ]);

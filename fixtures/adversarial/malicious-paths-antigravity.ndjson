@@ -1,0 +1,3 @@
+{"event":"init","conversation_id":"paths-agy-1","init":{"cwd":"/workspace/example-repo/scratchpad","tools":["read_file"],"permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"conversation_id":"paths-agy-1","step_index":0,"state":"DONE","step_type":"tool","tool_name":"read_file","duration_seconds":0.01,"tool_info":{"name":"read_file","parameters":{"path":"../../../etc/passwd"}}}}
+{"event":"step_update","step_update":{"conversation_id":"paths-agy-1","step_index":1,"state":"DONE","step_type":"tool","tool_name":"run_command","duration_seconds":0.02,"tool_info":{"name":"run_command","parameters":{"CommandLine":"cat ../../.ssh/id_rsa"}}}}

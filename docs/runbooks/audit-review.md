@@ -30,7 +30,8 @@ exists for this attempt" is never a way to hide that the attempt was made.
 The rule name comes from the closed rule set in `packages/policy/src/decide.ts`
 (`RULES`), which is default-deny and denies on the first matching rule — the
 `rule` field is always the one that actually decided the outcome, not
-necessarily the first rule in the list.
+necessarily the first rule in the list. Regression coverage lives in
+`apps/agentd/src/audit.integration.test.ts` and `packages/policy/src/decide.test.ts`.
 
 ## What rules can decide
 

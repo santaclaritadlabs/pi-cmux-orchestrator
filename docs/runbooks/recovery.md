@@ -25,15 +25,18 @@ for why a surviving worker is stopped rather than adopted — the short version
 is that `agentd` is not that process's parent after a restart, so it can never
 observe its exit code.
 
-`agentd start` logs a one-line summary on every boot:
+`agentd start` logs a one-line summary on every boot when recovery completes
+successfully:
 
 ```
 recovery complete { inspected, orphaned, terminated, unstoppable }
 ```
 
-`unstoppable` is the number that needs a human. It means a surviving worker
-did not die even after `SIGKILL` — check for a process wedged in
-uninterruptible I/O and stop it by hand.
+`unstoppable` is always `0` on that success path — if a surviving worker
+cannot be stopped even after `SIGKILL`, recovery fails closed with
+`RECOVERY_INCOMPLETE`, the daemon refuses to open its socket, and an error
+log names the `{ runId, pid }` pair. That is the case that needs a human:
+check for a process wedged in uninterruptible I/O and stop it by hand.
 
 ## What recovery deliberately does not do
 
@@ -75,9 +78,9 @@ was — reported, never reclaimed automatically
      a manual, audited step, not something to script casually — the whole
      point of "reported, never reclaimed automatically" is that an operator
      makes the call.
-5. **If `unstoppable > 0`**, find the PID from the recovery log
-   (`stopping a worker that outlived its daemon`) and kill it by hand, then
-   confirm the worktree it was writing to.
+5. **If recovery failed with `RECOVERY_INCOMPLETE`**, find the PID from the
+   error log (`a surviving worker could not be stopped during recovery`) and
+   kill it by hand, then confirm the worktree it was writing to.
 
 ## What this runbook does not cover
 

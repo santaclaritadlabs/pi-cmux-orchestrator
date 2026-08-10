@@ -52,6 +52,27 @@ export const ADVERSARIAL_FIXTURES = [
   "missing-terminal-event.ndjson",
   "prompt-injection.ndjson",
   "control-characters.ndjson",
+  "malicious-paths.ndjson",
 ] as const;
 
 export type AdversarialFixture = (typeof ADVERSARIAL_FIXTURES)[number];
+
+export type AdversarialProvider = "codex" | "claude" | "cursor" | "antigravity";
+
+export const PROVIDER_ADVERSARIAL_FIXTURES: Readonly<
+  Record<AdversarialProvider, readonly string[]>
+> = {
+  codex: ["protocol-drift-codex.ndjson", "malicious-paths-codex.ndjson"],
+  claude: ["protocol-drift-claude.ndjson", "malicious-paths-claude.ndjson"],
+  cursor: ["protocol-drift-cursor.ndjson", "malicious-paths-cursor.ndjson"],
+  antigravity: [
+    "protocol-drift-antigravity.ndjson",
+    "malicious-paths-antigravity.ndjson",
+  ],
+};
+
+export function providerAdversarialFixtures(
+  provider: AdversarialProvider,
+): readonly string[] {
+  return PROVIDER_ADVERSARIAL_FIXTURES[provider];
+}

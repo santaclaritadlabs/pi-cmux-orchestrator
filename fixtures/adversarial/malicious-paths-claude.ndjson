@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"paths-claude","tools":["Read","Bash"],"model":"claude-sonnet-5","permissionMode":"dontAsk"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"../../../etc/passwd"}}]},"session_id":"paths-claude"}
+{"type":"user","message":{"id":"msg_2","role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"root:x:0:0","is_error":false}]},"session_id":"paths-claude"}
+{"type":"assistant","message":{"id":"msg_3","role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"cat ../../.ssh/id_rsa"}}]},"session_id":"paths-claude"}

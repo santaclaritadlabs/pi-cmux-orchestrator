@@ -7,7 +7,8 @@ import { describe, it } from "node:test";
 import { RunStore } from "@pi-cmux/core";
 import { pidExists } from "@pi-cmux/process-supervisor";
 import { sampleTask } from "@pi-cmux/protocol";
-import { temporaryDirectory } from "@pi-cmux/testkit";
+import { createFixtureRepository, temporaryDirectory } from "@pi-cmux/testkit";
+import { WorktreeManager } from "@pi-cmux/worktrees";
 
 import { recoverRuns, type RecoveryReport } from "./recovery.ts";
 
@@ -248,5 +249,84 @@ describe("restart recovery", () => {
     const state = await store.readState(created.value.runId);
     assert.ok(state.ok);
     assert.equal(state.value.state, "QUEUED");
+  });
+
+  it("fails closed when a surviving worker cannot be stopped", async () => {
+    await using dir = await temporaryDirectory();
+    const store = await createStore(dir.path);
+    const created = await store.create(sampleTask());
+    assert.ok(created.ok);
+    const { runId } = created.value;
+
+    const survivor = spawn("/bin/sleep", ["120"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    survivor.unref();
+    const pid = survivor.pid;
+    assert.ok(pid !== undefined);
+
+    await store.transitionState(runId, "PREPARING");
+    await store.transitionState(runId, "RUNNING");
+    await store.updateMetadata(runId, {
+      pid,
+      processStartedAtMs: Date.now(),
+    });
+
+    const recovered = await recoverRuns({
+      store,
+      stopSurvivingWorker: () => Promise.resolve(false),
+      sleep: () => Promise.resolve(),
+    });
+
+    assert.equal(recovered.ok, false);
+    assert.equal(recovered.error.code, "RECOVERY_INCOMPLETE");
+
+    const state = await store.readState(runId);
+    assert.ok(state.ok);
+    assert.equal(state.value.state, "ORPHANED");
+
+    survivor.kill("SIGKILL");
+  });
+
+  it("does not release worktree claims during recovery", async () => {
+    await using dir = await temporaryDirectory();
+    const store = await createStore(dir.path);
+    const repository = await createFixtureRepository(
+      path.join(dir.path, "repo"),
+    );
+    const worktreeRoot = path.join(dir.path, "worktrees");
+    const worktrees = new WorktreeManager({ root: worktreeRoot });
+    const worktreePath = path.join(worktreeRoot, "AUTH-41-recovery-claim");
+
+    const provisioned = await worktrees.provision({
+      runId: "run_01JQZX3K5T7V9B2N4M6P8R0AWC",
+      taskId: "AUTH-41",
+      repoId: "acme/api",
+      repoPath: repository.path,
+      worktreePath,
+      baseRef: "main",
+    });
+    assert.ok(provisioned.ok);
+
+    const created = await store.create(sampleTask());
+    assert.ok(created.ok);
+    await store.transitionState(created.value.runId, "PREPARING");
+    await store.transitionState(created.value.runId, "RUNNING");
+    await store.updateMetadata(created.value.runId, {
+      pid: 999_999,
+      processStartedAtMs: 1_000,
+    });
+
+    const report = await recover({ store });
+    assert.equal(report.orphaned.length, 1);
+
+    const unreleased = await worktrees.listUnreleased();
+    assert.ok(unreleased.ok);
+    assert.equal(unreleased.value.length, 1);
+    const claim = unreleased.value[0];
+    assert.ok(claim !== undefined);
+    assert.equal(claim.runId, "run_01JQZX3K5T7V9B2N4M6P8R0AWC");
+    assert.ok(claim.worktreePath.endsWith("AUTH-41-recovery-claim"));
   });
 });

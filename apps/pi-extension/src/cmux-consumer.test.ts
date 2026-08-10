@@ -57,4 +57,33 @@ describe("CmuxStatusConsumer", () => {
     assert.equal(result.error.code, "SCHEMA_INVALID");
     assert.equal(called, false);
   });
+
+  it("isolates a publish failure instead of stopping the watch loop", async () => {
+    let snapshotsSeen = 0;
+    const errors: unknown[] = [];
+    const consumer = new CmuxStatusConsumer(
+      {
+        watch: async (_runId, options) => {
+          // Two snapshots in one watch: the first publish throws, the
+          // second must still run — proving the loop survived the first.
+          await options.onSnapshot(snapshot);
+          await options.onSnapshot(snapshot);
+          return ok(undefined);
+        },
+      },
+      {
+        publish: () => {
+          snapshotsSeen += 1;
+          if (snapshotsSeen === 1) throw new Error("cmux socket down");
+        },
+      },
+    );
+
+    const result = await consumer.follow(snapshot.run.runId, {
+      onPublishError: (error) => errors.push(error),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(snapshotsSeen, 2);
+    assert.equal(errors.length, 1);
+  });
 });

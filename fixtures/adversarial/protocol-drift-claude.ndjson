@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"drift-claude","tools":["Read"],"model":"claude-sonnet-5","permissionMode":"dontAsk"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"README.md"}}]},"session_id":"drift-claude"}
+{"type":"vendor.future.block","unknown":true}
+not valid json {{
+{"type":"user","message":{"id":"msg_2","role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]},"session_id":"drift-claude"}
+{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"drift-claude","usage":{"input_tokens":1,"output_tokens":1}}

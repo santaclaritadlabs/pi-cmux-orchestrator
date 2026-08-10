@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { parseEventPayload } from "@pi-cmux/protocol";
-import { readFixture } from "@pi-cmux/testkit";
+import {
+  assertSurvivesAdversarialCorpus,
+  providerAdversarialFixtures,
+  readFixture,
+} from "@pi-cmux/testkit";
 
 import {
   CodexEventNormalizer,
@@ -148,5 +152,15 @@ describe("CodexEventNormalizer", () => {
     for (const event of batch.events) {
       assert.equal(parseEventPayload(event).ok, true);
     }
+  });
+});
+
+describe("adversarial corpus (Task 8)", () => {
+  it("survives hardened adversarial fixtures", async () => {
+    await assertSurvivesAdversarialCorpus(
+      (raw) => normalizeCodexStream(raw, OPTIONS),
+      providerAdversarialFixtures("codex"),
+      { hardened: true },
+    );
   });
 });

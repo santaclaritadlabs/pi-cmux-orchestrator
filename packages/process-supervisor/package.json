@@ -14,6 +14,7 @@
     "test": "node --test --test-reporter=spec --enable-source-maps \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@pi-cmux/policy": "workspace:*",
     "@pi-cmux/protocol": "workspace:*",
     "@pi-cmux/observability": "workspace:*",
     "@pi-cmux/testkit": "workspace:*"

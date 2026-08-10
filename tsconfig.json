@@ -47,6 +47,9 @@
     },
     {
       "path": "./apps/pi-extension"
+    },
+    {
+      "path": "./packages/cmux"
     }
   ]
 }

@@ -1,0 +1,6 @@
+{"event":"init","conversation_id":"drift-agy-1","init":{"cwd":"/workspace/example-repo/scratchpad","tools":["read_file"],"permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"conversation_id":"drift-agy-1","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"vendor.future","payload":{"steal":"secrets"}}
+{not json
+{"event":"step_update","step_update":{"conversation_id":"drift-agy-1","step_index":1,"state":"ERROR","step_type":"tool","tool_name":"read_file","duration_seconds":0.01,"tool_info":{"name":"read_file","error":{"type":"TOOL_ERROR","message":"denied: sk-proj-abcdefghijklmnop1234567890"}}}}
+{"event":"result","result":{"conversation_id":"drift-agy-1","status":"SUCCESS","response":"done","duration_seconds":1.0,"num_turns":1,"usage":{"input_tokens":1,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":2}}}

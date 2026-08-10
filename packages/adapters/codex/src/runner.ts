@@ -14,6 +14,7 @@ import {
 import { nullLogger, type Logger } from "@pi-cmux/observability";
 import {
   superviseProcess,
+  validateWorkerPlacement,
   type ProcessOutcome,
   type SupervisorOptions,
 } from "@pi-cmux/process-supervisor";
@@ -82,6 +83,12 @@ export async function start(
   args: StartArgs,
   options: CodexRunnerOptions = {},
 ): Promise<Result<RunHandle, AgentdError>> {
+  const placement = await validateWorkerPlacement(
+    args.cwd,
+    args.task.workspace.worktreePath,
+  );
+  if (!placement.ok) return placement;
+
   const logger = (options.logger ?? nullLogger).child({
     component: "adapter:codex",
     runId: args.runId,
