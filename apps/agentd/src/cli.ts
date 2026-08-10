@@ -38,6 +38,16 @@ import { recoverRuns } from "./recovery.ts";
 import { RepositoryRegistry } from "./repositories.ts";
 import { startServer } from "./server.ts";
 
+// Injected by `scripts/bundle.mjs` via esbuild `define` for the published
+// artifact (where CI has already overwritten the manifest's version from the
+// `vX.Y.Z` tag — see docs/adr/0009-release-packaging.md). In a local `tsc`
+// build the symbol is genuinely absent, so `typeof` falls back without
+// throwing — a dev build honestly reports `0.0.0`.
+declare const __AGENTD_VERSION__: string | undefined;
+
+const AGENTD_VERSION =
+  typeof __AGENTD_VERSION__ === "string" ? __AGENTD_VERSION__ : "0.0.0";
+
 function out(text: string): void {
   process.stdout.write(`${text}\n`);
 }
@@ -54,6 +64,7 @@ function usage(): void {
       "  worktrees                list worktrees claimed but never released",
       "  logs --follow <runId>    stream a run's events",
       "  verify                   smoke-test this artifact end to end",
+      "  --version                print this artifact's version and exit",
       "",
     ].join("\n"),
   );
@@ -488,6 +499,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return await commandLogs(argv.slice(1));
     case "verify":
       return await commandVerify();
+    case "--version":
+    case "-v":
+      out(AGENTD_VERSION);
+      return 0;
     case undefined:
     case "--help":
     case "help":

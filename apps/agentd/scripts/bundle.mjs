@@ -42,7 +42,7 @@ const agentdRoot = path.resolve(here, "..");
 const repoRoot = path.resolve(agentdRoot, "..", "..");
 const outDir = path.join(agentdRoot, "bundle");
 
-async function bundle(entryPoint, outfile, { shebang = false } = {}) {
+async function bundle(entryPoint, outfile, { shebang = false, define } = {}) {
   await esbuild.build({
     entryPoints: [entryPoint],
     outfile,
@@ -52,15 +52,26 @@ async function bundle(entryPoint, outfile, { shebang = false } = {}) {
     format: "esm",
     logLevel: "info",
     ...(shebang ? { banner: { js: "#!/usr/bin/env node" } } : {}),
+    ...(define ? { define } : {}),
   });
 }
 
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 
+// Read the dev manifest up front: the CLI bundle needs its `version` injected
+// as a literal (see the `__AGENTD_VERSION__` define below). In the release CI
+// job this manifest has already been overwritten from the `vX.Y.Z` tag; in a
+// local bundle run it is whatever is committed (`0.0.0` by design — see
+// docs/adr/0009-release-packaging.md).
+const devManifest = JSON.parse(
+  await readFile(path.join(agentdRoot, "package.json"), "utf8"),
+);
+
 const cliOut = path.join(outDir, "cli.js");
 await bundle(path.join(agentdRoot, "dist", "cli.js"), cliOut, {
   shebang: true,
+  define: { __AGENTD_VERSION__: JSON.stringify(devManifest.version) },
 });
 // npm sets this on publish, but a local run of `bundle/cli.js` needs it too.
 await chmod(cliOut, 0o755);
@@ -70,9 +81,6 @@ await bundle(
   path.join(outDir, "replay.js"),
 );
 
-const devManifest = JSON.parse(
-  await readFile(path.join(agentdRoot, "package.json"), "utf8"),
-);
 // Everything the dev manifest needs for workspace linking and nothing this
 // artifact needs at runtime: no `dependencies` (inlined), no `exports`
 // (this is a CLI, not an importable library).
